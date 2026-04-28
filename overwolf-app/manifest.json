@@ -1,0 +1,124 @@
+{
+  "manifest_version": 1,
+  "type": "WebApp",
+  "meta": {
+    "name": "CasaGG",
+    "version": "3.1.0.0",
+    "minimum-overwolf-version": "0.135.0.0",
+    "author": "CasaGG",
+    "icon": "assets/casaorangegg.png",
+    "icon_gray": "assets/casaorangegg.png",
+    "description": "Your AI-powered video game assistant - live game detection, map tracking, voice commands, and instant answers for any game."
+  },
+  "permissions": [
+    "Hotkeys",
+    "GameInfo",
+    "GameEvents",
+    "Media",
+    "FileSystem",
+    "GetRunningGameInfo"
+  ],
+  "data": {
+    "start_window": "background",
+    "launch_events": [
+      {
+        "event": "GameLaunch",
+        "tracked_games": [
+          21216, 21566, 5426, 22730, 21640, 21922, 10906,
+          8032, 6350, 21288, 7764, 7314, 21854, 6472,
+          10826, 11362, 21404, 21640, 21566, 22060
+        ],
+        "wait_for_stable_framerate": false
+      }
+    ],
+    "windows": {
+      "background": {
+        "file": "background.html",
+        "transparent": false,
+        "resizable": false,
+        "show_in_taskbar": false,
+        "size": { "width": 400, "height": 300 },
+        "start_position": { "top": 0, "left": 0 },
+        "is_background_page": true
+      },
+      "main": {
+        "file": "app.html",
+        "transparent": false,
+        "resizable": true,
+        "show_in_taskbar": true,
+        "size": { "width": 1280, "height": 820 },
+        "min_size": { "width": 960, "height": 640 },
+        "start_position": { "top": 30, "left": 30 },
+        "desktop_only": false,
+        "native_window": false
+      },
+      "overlay": {
+        "file": "overlay.html",
+        "transparent": true,
+        "resizable": true,
+        "show_in_taskbar": false,
+        "size": { "width": 370, "height": 300 },
+        "min_size": { "width": 280, "height": 160 },
+        "start_position": { "top": 80, "left": 24 },
+        "in_game_only": false,
+        "clickthrough": false
+      },
+      "map": {
+        "file": "map.html",
+        "transparent": false,
+        "resizable": true,
+        "show_in_taskbar": false,
+        "size": { "width": 520, "height": 560 },
+        "min_size": { "width": 320, "height": 320 },
+        "start_position": { "top": 80, "left": 420 },
+        "in_game_only": false
+      }
+    },
+    "hotkeys": {
+      "toggle_overlay": {
+        "title": "Toggle CasaGG Game Overlay",
+        "default": "Ctrl+Shift+G",
+        "passthrough": false
+      },
+      "voice_ask": {
+        "title": "CasaGG Voice Ask",
+        "default": "Ctrl+Shift+V",
+        "passthrough": false
+      }
+    },
+    "game_events": [
+      {
+        "game_ids": [21216],
+        "features": ["match_info", "kill", "death", "location", "inventory"]
+      },
+      {
+        "game_ids": [21566],
+        "features": ["game_info", "match_info", "kill", "death", "inventory", "me", "location"]
+      },
+      {
+        "game_ids": [5426],
+        "features": ["game_info", "live_client_data", "match_info", "kill", "death"]
+      },
+      {
+        "game_ids": [22730],
+        "features": ["kill", "death", "match_info", "game_info", "player"]
+      },
+      {
+        "game_ids": [21640],
+        "features": ["kill", "death", "match_info", "game_info", "me", "location"]
+      },
+      {
+        "game_ids": [21922],
+        "features": ["kill", "death", "match_info", "game_info"]
+      },
+      {
+        "game_ids": [10906],
+        "features": ["kill", "death", "match_info", "game_info", "gpm_tpm", "hero_abilities"]
+      },
+      {
+        "game_ids": [7764],
+        "features": ["kill", "death", "match_info", "game_info", "player"]
+      }
+    ]
+  }
+}

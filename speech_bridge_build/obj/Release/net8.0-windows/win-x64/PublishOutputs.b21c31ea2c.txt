@@ -1,0 +1,2 @@
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\bin\Release\net8.0-windows\win-x64\publish\speech_bridge.pdb
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\bin\Release\net8.0-windows\win-x64\publish\speech_bridge.exe

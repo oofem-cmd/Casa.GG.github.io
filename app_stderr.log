@@ -1,0 +1,15 @@
+C:\Users\xcmmo\Desktop\casaggv24\main.js:175
+ipcMain.on('speech-cmd', (_e, cmd) => sendToSpeech(cmd));
+        ^
+
+TypeError: Cannot read properties of undefined (reading 'on')
+    at Object.<anonymous> (C:\Users\xcmmo\Desktop\casaggv24\main.js:175:9)
+    at Module._compile (node:internal/modules/cjs/loader:1373:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1432:10)
+    at Module.load (node:internal/modules/cjs/loader:1215:32)
+    at Module._load (node:internal/modules/cjs/loader:1031:12)
+    at c._load (node:electron/js2c/node_init:2:13801)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:189:12)
+    at node:internal/main/run_main_module:28:49
+
+Node.js v20.16.0

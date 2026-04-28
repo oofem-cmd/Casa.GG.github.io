@@ -1,0 +1,51 @@
+{
+  "name": "casagg",
+  "version": "3.0.0",
+  "description": "CasaGG v3 — Ultimate Video Game Assistant",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "dist": "electron-builder --win nsis --x64"
+  },
+  "dependencies": {
+    "@babel/standalone": "^7.23.0",
+    "electron-store": "^8.1.1",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "electron": "^30.5.1",
+    "electron-builder": "^24.6.0",
+    "png-to-ico": "^3.0.1"
+  },
+  "build": {
+    "appId": "com.casagg.casagg",
+    "productName": "CasaGG",
+    "files": [
+      "**/*",
+      "!*.jsx",
+      "!README.md"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/casaorangegg.ico",
+      "artifactName": "CasaGG Setup ${version}.exe",
+      "signAndEditExecutable": false,
+      "signingHashAlgorithms": null
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "author": "",
+  "license": "ISC"
+}

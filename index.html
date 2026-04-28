@@ -1,0 +1,1459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CasaGG — Gaming Assistant</title>
+  <script src="node_modules/react/umd/react.development.js"></script>
+  <script src="node_modules/react-dom/umd/react-dom.development.js"></script>
+  <script src="node_modules/@babel/standalone/babel.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { height: 100vh; overflow: hidden; }
+
+    /* ── Logo intro animation ─────────────────────────────────────────── */
+    @keyframes logoDrop {
+      0%   { transform: translateY(-340px); opacity: 0; }
+      55%  { transform: translateY(0px);    opacity: 1; }
+      68%  { transform: translateY(-28px);  opacity: 1; }  /* bounce up */
+      80%  { transform: translateY(0px);    opacity: 1; }  /* land */
+      88%  { transform: translateY(-10px);  opacity: 1; }  /* small bounce */
+      100% { transform: translateY(0px);    opacity: 1; }  /* settle */
+    }
+    @keyframes introFadeOut {
+      0%   { opacity: 1; }
+      100% { opacity: 0; pointer-events: none; }
+    }
+    .intro-screen {
+      position: fixed; inset: 0; z-index: 99999;
+      background: #1E2028;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 18px;
+      pointer-events: none;
+    }
+    .intro-screen.fading {
+      animation: introFadeOut 0.5s ease forwards;
+      pointer-events: none;
+    }
+    .intro-logo {
+      animation: logoDrop 1.35s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+      transform-origin: center bottom;
+    }
+    .intro-logo img {
+      width: 130px; height: 130px; object-fit: contain;
+      filter: drop-shadow(0 12px 40px rgba(255,107,26,0.45));
+    }
+    .intro-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 900; font-size: 36px; letter-spacing: 2px;
+      color: #FF6B1A; opacity: 0;
+      animation: introFadeOut 0.01s 1.6s reverse forwards; /* fade in after logo lands */
+    }
+    .intro-title span { color: #e8eaf0; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useRef, useCallback } = React;
+    const _path = require('path');
+    const _ipc  = (() => { try { return require('electron').ipcRenderer; } catch { return null; } })();
+
+    // Resolve asset paths that work in both dev and packaged .exe
+    const assetPath = name =>
+      'file:///' + _path.join(__dirname, 'assets', name).replace(/\\/g, '/');
+
+    // ── Theme tokens ─────────────────────────────────────────────────────────
+    const THEMES = {
+      light: {
+        bgApp:"#EDEEF0", bgPanel:"#F5F6F7", bgCard:"#FFFFFF", bgInput:"#E8E9EC",
+        bgHover:"#E2E4E8", bgSidebar:"#F5F6F7", bgModal:"rgba(0,0,0,0.45)",
+        border:"#DDDFE3", borderFocus:"#FF6B1A",
+        textPrimary:"#1A1B1E", textSecond:"#6B7280", textMuted:"#9CA3AF", textBright:"#0F1013",
+        orange:"#FF6B1A", orangeSoft:"rgba(255,107,26,0.08)", orangeBorder:"rgba(255,107,26,0.22)",
+        success:"#22C55E", danger:"#EF4444",
+        shadow:"0 1px 4px rgba(0,0,0,0.06)", shadowCard:"0 2px 10px rgba(0,0,0,0.05)",
+        shadowOrange:"0 4px 18px rgba(255,107,26,0.22)",
+      },
+      dark: {
+        bgApp:"#1E2028", bgPanel:"#252830", bgCard:"#2D3140", bgInput:"#1A1C23",
+        bgHover:"#343848", bgSidebar:"#252830", bgModal:"rgba(0,0,0,0.65)",
+        border:"#383D4E", borderFocus:"#FF6B1A",
+        textPrimary:"#E8EAF0", textSecond:"#9AA0B8", textMuted:"#5A6080", textBright:"#F2F4FF",
+        orange:"#FF6B1A", orangeSoft:"rgba(255,107,26,0.12)", orangeBorder:"rgba(255,107,26,0.3)",
+        success:"#22C55E", danger:"#EF4444",
+        shadow:"0 1px 4px rgba(0,0,0,0.3)", shadowCard:"0 2px 10px rgba(0,0,0,0.3)",
+        shadowOrange:"0 4px 18px rgba(255,107,26,0.25)",
+      },
+    };
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    const getTZ   = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return 'UTC'; } };
+    const getTime = () => new Date().toLocaleString('en-US', { timeZone:getTZ(), weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+
+    const doSpeak = (text, settings, onEnd) => {
+      if (!window.speechSynthesis) return;
+      window.speechSynthesis.cancel();
+      const clean = (text || '')
+        .replace(/\[Source:[^\]]*\]/g, '')
+        .replace(/💡\s*Pro Tip[^\n]*/gi, '')
+        .replace(/Pro Tip[^\n]*/gi, '')
+        .replace(/#+\s*/g, '')
+        .replace(/[*_`▸]/g, '')
+        // Strip all emoji and non-Latin Unicode so TTS never says "smiling face" etc.
+        .replace(/[^\x00-\x7FÀ-ͯ]/g, '')
+        .replace(/\s{2,}/g, ' ').trim()
+        .substring(0, 900);
+      const utt = new SpeechSynthesisUtterance(clean);
+      utt.rate   = settings.speakRate ?? 1.0;
+      utt.volume = (settings.volume ?? 80) / 100;
+      const voices = window.speechSynthesis.getVoices();
+      const pick = settings.voiceName
+        ? voices.find(v => v.name === settings.voiceName)
+        : voices.find(v => settings.voiceGender === 'male'
+            ? /male|david|mark|james|guy/i.test(v.name)
+            : /female|zira|samantha|karen|moira|aria/i.test(v.name)) || voices[0];
+      if (pick) utt.voice = pick;
+      utt.onend = onEnd ?? null;
+      window.speechSynthesis.speak(utt);
+    };
+    const stopSpeak = () => window.speechSynthesis?.cancel();
+
+    const buildSystemPrompt = (username, tz, game, searchResults) => {
+      let p = `You are CasaGG, the ultimate video game assistant. Talk like a knowledgeable, enthusiastic gaming buddy — friendly, casual, accurate.
+${username ? `The player's name is ${username}. Use it naturally every few responses to build rapport.` : ''}
+Player's timezone: ${tz}. Current date/time: ${getTime()}.
+${game ? `Current game in focus: **${game}**. Tailor all answers to this game unless the player asks otherwise.` : ''}
+Expertise: boss strategies, quest walkthroughs, collectibles/secrets, lore, builds/loadouts, puzzles, live service events, item crafting.
+Style: concise but complete. Voice-friendly — minimal markdown. Use ## headers only for multi-part answers. Bullets/numbered steps for lists. End with 💡 Pro Tip when useful. Cite sources as [Source: URL] on its own line.
+For live service info, factor in the player's timezone (${tz}) for event timers.`;
+      if (searchResults?.length) {
+        p += `\n\nWEB SEARCH CONTEXT (use this for accurate, up-to-date answers):\n`;
+        searchResults.forEach((r, i) => { p += `\n[${i+1}] ${r.title}\n${r.snippet}\nURL: ${r.url}\n`; });
+        p += `\nCite the most relevant source(s) using [Source: URL] in your answer.`;
+      }
+      return p;
+    };
+
+    const QUICK = [
+      { icon:'⚔️', label:'Boss Strategy'  },
+      { icon:'🗺️', label:'Next Objective' },
+      { icon:'🏆', label:'Collectibles'   },
+      { icon:'🛡️', label:'Best Build'     },
+      { icon:'📖', label:'Character Lore' },
+      { icon:'🧩', label:'Puzzle Help'    },
+      { icon:'🎉', label:'Current Events' },
+      { icon:'💎', label:'Rare Loot'      },
+    ];
+
+    // ── Logo intro with drop+bounce animation ────────────────────────────────
+    const LogoIntro = ({ onDone }) => {
+      const [fading, setFading] = useState(false);
+      const played  = useRef(false);
+      const doneRef = useRef(onDone);
+      doneRef.current = onDone; // always points to latest without being a dep
+
+      useEffect(() => {
+        const sfxTimer = setTimeout(() => {
+          if (played.current) return;
+          played.current = true;
+          try {
+            const audio = new Audio(assetPath('casaplop.mp3'));
+            audio.volume = 0.9;
+            audio.play().catch(() => {});
+          } catch {}
+        }, 740);
+
+        const fadeTimer = setTimeout(() => setFading(true), 1800);
+        const doneTimer = setTimeout(() => doneRef.current(), 2350);
+
+        return () => { clearTimeout(sfxTimer); clearTimeout(fadeTimer); clearTimeout(doneTimer); };
+      }, []); // empty — run once on mount, never reset
+
+      return (
+        <div className={`intro-screen${fading ? ' fading' : ''}`}>
+          <div className="intro-logo">
+            <img src={assetPath('casaorangegg.png')} alt="CasaGG" />
+          </div>
+          <div className="intro-title" style={{ opacity: fading ? 0 : 1, transition: 'opacity 0.4s 0.2s' }}>
+            Casa<span>.GG</span>
+          </div>
+        </div>
+      );
+    };
+
+    // ── Formatted message renderer ────────────────────────────────────────────
+    const Formatted = ({ text, t }) => (
+      <div style={{ display:'flex', flexDirection:'column', gap:3 }}>
+        {text.split('\n').map((line, i) => {
+          if (!line.trim()) return <div key={i} style={{ height:5 }} />;
+          if (/^##\s/.test(line)) return <div key={i} style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:14, color:t.orange, marginTop:8, letterSpacing:0.5 }}>{line.replace(/^##\s/,'')}</div>;
+          if (/^#\s/.test(line))  return <div key={i} style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:800, fontSize:16, color:t.orange, marginTop:8 }}>{line.replace(/^#\s/,'')}</div>;
+          if (/^[-•]\s/.test(line)) return <div key={i} style={{ display:'flex', gap:8, alignItems:'flex-start', paddingLeft:4 }}><span style={{ color:t.orange, flexShrink:0, marginTop:3, fontSize:10 }}>▸</span><span>{line.replace(/^[-•]\s/,'')}</span></div>;
+          if (/^\d+\.\s/.test(line)) return <div key={i} style={{ display:'flex', gap:8, alignItems:'flex-start', paddingLeft:4 }}><span style={{ color:t.orange, flexShrink:0, fontWeight:700, minWidth:20, fontSize:11 }}>{line.match(/^(\d+)\./)?.[1]}.</span><span>{line.replace(/^\d+\.\s/,'')}</span></div>;
+          if (/\[Source:/.test(line)) {
+            const src = line.match(/\[Source:\s*(.*?)\]/)?.[1] ?? '#';
+            return <a key={i} href={src.startsWith('http') ? src : '#'} target="_blank" rel="noreferrer"
+              style={{ display:'inline-flex', alignItems:'center', gap:5, marginTop:6, padding:'3px 12px', background:t.orangeSoft, border:`1px solid ${t.orangeBorder}`, borderRadius:20, color:t.orange, fontSize:11, fontFamily:"'DM Mono',monospace", textDecoration:'none', width:'fit-content' }}>
+              🔗 {src.replace(/^https?:\/\/(www\.)?/,'').substring(0,50)}
+            </a>;
+          }
+          if (/Pro Tip|💡/.test(line)) return <div key={i} style={{ marginTop:8, padding:'8px 12px', background:t.orangeSoft, borderLeft:`3px solid ${t.orange}`, borderRadius:'0 8px 8px 0', fontSize:13, color:t.textSecond }}>{line}</div>;
+          return <span key={i} style={{ lineHeight:1.75 }}>{line.replace(/\*\*/g,'').replace(/`/g,'')}</span>;
+        })}
+      </div>
+    );
+
+    // ── Window Picker Modal ───────────────────────────────────────────────────
+    const WindowPickerModal = ({ t, onSelect, onClose }) => {
+      const [windows, setWindows] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [filter,  setFilter]  = useState('');
+
+      useEffect(() => {
+        if (!_ipc) { setLoading(false); return; }
+        _ipc.invoke('get-windows')
+          .then(wins => { setWindows(wins || []); setLoading(false); })
+          .catch(() => setLoading(false));
+      }, []);
+
+      const visible = windows.filter(w => w.name.toLowerCase().includes(filter.toLowerCase()));
+
+      return (
+        <div onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+          style={{ position:'fixed', inset:0, background:t.bgModal, zIndex:10000, display:'flex', alignItems:'center', justifyContent:'center' }}>
+          <div style={{ background:t.bgPanel, border:`1px solid ${t.border}`, borderRadius:18, padding:24, width:620, maxHeight:'75vh', display:'flex', flexDirection:'column', gap:16, boxShadow:'0 24px 80px rgba(0,0,0,0.5)' }}>
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+              <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:800, fontSize:18, color:t.textBright }}>🖥️ Select Game Window</div>
+              <button onClick={onClose} style={{ width:28, height:28, borderRadius:'50%', background:t.bgInput, border:`1px solid ${t.border}`, color:t.textMuted, cursor:'pointer', fontSize:13, display:'flex', alignItems:'center', justifyContent:'center' }}>✕</button>
+            </div>
+            <input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Filter windows…"
+              style={{ background:t.bgInput, border:`1px solid ${t.border}`, borderRadius:9, padding:'9px 14px', fontSize:13, color:t.textPrimary, fontFamily:"'Barlow',sans-serif", outline:'none' }}
+              onFocus={e => e.target.style.borderColor='#FF6B1A'} onBlur={e => e.target.style.borderColor=t.border} />
+            <div style={{ overflowY:'auto', display:'flex', flexDirection:'column', gap:8 }}>
+              {loading && <div style={{ textAlign:'center', color:t.textMuted, padding:32, fontSize:13 }}>Scanning open windows…</div>}
+              {!loading && visible.length === 0 && <div style={{ textAlign:'center', color:t.textMuted, padding:32, fontSize:13 }}>No windows found. Make sure your game is running.</div>}
+              {visible.map(w => (
+                <button key={w.id} onClick={() => onSelect(w)}
+                  style={{ display:'flex', alignItems:'center', gap:14, padding:'10px 14px', background:t.bgCard, border:`1px solid ${t.border}`, borderRadius:12, cursor:'pointer', textAlign:'left', transition:'all 0.15s', width:'100%' }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor='#FF6B1A'; e.currentTarget.style.background=t.bgHover; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor=t.border; e.currentTarget.style.background=t.bgCard; }}>
+                  {w.thumbnail
+                    ? <img src={w.thumbnail} alt="" style={{ width:96, height:54, objectFit:'cover', borderRadius:6, flexShrink:0, border:`1px solid ${t.border}` }} />
+                    : <div style={{ width:96, height:54, background:t.bgInput, borderRadius:6, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', fontSize:22 }}>🖥️</div>
+                  }
+                  <span style={{ fontSize:13, fontWeight:600, color:t.textPrimary }}>{w.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // ── Settings sub-components ───────────────────────────────────────────────
+    // Defined OUTSIDE SettingsPanel so React sees stable component types across
+    // renders. If defined inside, React recreates the type on every render and
+    // fully unmounts/remounts inputs — causing instant focus loss on every keystroke.
+    const SCard = ({ title, icon, t, children }) => (
+      <div style={{ background:t.bgCard, border:`1px solid ${t.border}`, borderRadius:14, padding:20, display:'flex', flexDirection:'column', gap:14 }}>
+        <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:800, fontSize:12, letterSpacing:2, color:t.textPrimary, display:'flex', alignItems:'center', gap:7, paddingBottom:12, borderBottom:`1px solid ${t.border}` }}>
+          <span style={{ fontSize:16 }}>{icon}</span>{title}
+        </div>
+        {children}
+      </div>
+    );
+    const SRow = ({ label, hint, t, children }) => (
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10 }}>
+        <div>
+          <div style={{ fontSize:13, fontWeight:600, color:t.textPrimary }}>{label}</div>
+          {hint && <div style={{ fontSize:11, color:t.textMuted, marginTop:1 }}>{hint}</div>}
+        </div>
+        {children}
+      </div>
+    );
+    const SToggle = ({ checked, onChange, t }) => (
+      <label style={{ position:'relative', width:44, height:24, cursor:'pointer', display:'block', flexShrink:0 }}>
+        <input type="checkbox" checked={checked} onChange={onChange} style={{ position:'absolute', opacity:0, width:'100%', height:'100%', margin:0, cursor:'pointer', zIndex:1 }} />
+        <span style={{ position:'absolute', inset:0, background:checked ? '#FF6B1A' : t.border, borderRadius:12, transition:'background 0.2s' }} />
+        <span style={{ position:'absolute', width:16, height:16, background:'#fff', borderRadius:'50%', top:4, left:checked ? 24 : 4, transition:'left 0.2s', boxShadow:'0 1px 4px rgba(0,0,0,0.2)', zIndex:2 }} />
+      </label>
+    );
+    const SSlider = ({ value, min, max, step, onChange, display, t }) => (
+      <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+        <input type="range" min={min} max={max} step={step} value={value} onChange={onChange} style={{ width:110, accentColor:'#FF6B1A', cursor:'pointer' }} />
+        <span style={{ fontSize:12, color:t.textMuted, minWidth:38, fontFamily:"'DM Mono',monospace" }}>{display}</span>
+      </div>
+    );
+
+    // ── Request Games Panel ───────────────────────────────────────────────────
+    const RequestGamesPanel = ({ settings, t }) => {
+      const [gameTitle,  setGameTitle]  = useState('');
+      const [questions,  setQuestions]  = useState('');
+      const [fromEmail,  setFromEmail]  = useState('');
+      const [sending,    setSending]    = useState(false);
+      const [lastSent,   setLastSent]   = useState('');
+      const [sent,       setSent]       = useState(false);
+      const [sendError,  setSendError]  = useState('');
+
+      const submit = async () => {
+        if (!gameTitle.trim() || sending) return;
+        setSending(true);
+        setSendError('');
+        const res = _ipc ? await _ipc.invoke('submit-game-request', gameTitle.trim(), questions.trim(), settings.username || 'Anonymous', fromEmail.trim()).catch(e => ({ ok: false, error: e.message })) : { ok: false, error: 'App not connected' };
+        setSending(false);
+        if (res?.ok) {
+          setLastSent(gameTitle.trim());
+          setGameTitle('');
+          setQuestions('');
+          setSent(true);
+          setTimeout(() => setSent(false), 3500);
+        } else {
+          setSendError(res?.error || 'Failed to send — check your internet connection.');
+          setTimeout(() => setSendError(''), 8000);
+        }
+      };
+
+      return (
+        <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:40 }}>
+          {sent ? (
+            <div style={{ textAlign:'center', display:'flex', flexDirection:'column', gap:14, alignItems:'center', animation:'fadeUp 0.3s ease' }}>
+              <span style={{ fontSize:52 }}>🎮</span>
+              <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:800, fontSize:26, color:'#22C55E', letterSpacing:0.5 }}>Request Sent!</div>
+              <div style={{ fontSize:13, color:t.textMuted, maxWidth:340, lineHeight:1.6 }}>
+                <strong style={{ color:t.textPrimary }}>{lastSent}</strong> has been submitted. The dev will review it and add it soon.
+              </div>
+              <button onClick={() => setSent(false)} style={{ marginTop:4, padding:'8px 24px', background:'transparent', border:`1px solid ${t.border}`, borderRadius:20, color:t.textSecond, fontSize:12, cursor:'pointer', fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, letterSpacing:0.5 }}>
+                Request Another Game
+              </button>
+            </div>
+          ) : (
+            <div style={{ width:'100%', maxWidth:560, display:'flex', flexDirection:'column', gap:20 }}>
+              <div style={{ textAlign:'center' }}>
+                <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:800, fontSize:28, color:t.textBright, letterSpacing:0.5 }}>Request a Game</div>
+                <div style={{ fontSize:13, color:t.textMuted, marginTop:5 }}>Tell us what game you want Casa to support</div>
+              </div>
+              <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                <label style={{ fontSize:11, fontWeight:700, color:t.textMuted, fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:1.5 }}>YOUR EMAIL <span style={{ fontWeight:400, textTransform:'none', letterSpacing:0 }}>(so we can reply)</span></label>
+                <input value={fromEmail} onChange={e => setFromEmail(e.target.value)}
+                  type="email" placeholder="your@email.com"
+                  style={{ background:t.bgInput, border:`1px solid ${fromEmail.trim() ? t.orange : t.border}`, borderRadius:10, padding:'12px 14px', fontSize:14, color:t.textPrimary, fontFamily:"'Barlow',sans-serif", outline:'none', transition:'border-color 0.15s' }} />
+              </div>
+              <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                <label style={{ fontSize:11, fontWeight:700, color:t.textMuted, fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:1.5 }}>GAME TITLE *</label>
+                <input value={gameTitle} onChange={e => setGameTitle(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && submit()}
+                  placeholder="e.g. Elden Ring, Minecraft, Valorant…"
+                  style={{ background:t.bgInput, border:`1px solid ${gameTitle.trim() ? t.orange : t.border}`, borderRadius:10, padding:'12px 14px', fontSize:14, color:t.textPrimary, fontFamily:"'Barlow',sans-serif", outline:'none', transition:'border-color 0.15s' }} />
+              </div>
+              <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                <label style={{ fontSize:11, fontWeight:700, color:t.textMuted, fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:1.5 }}>QUESTIONS YOU'D ASK <span style={{ fontWeight:400, textTransform:'none', letterSpacing:0 }}>(optional)</span></label>
+                <textarea value={questions} onChange={e => setQuestions(e.target.value)} rows={5}
+                  placeholder={"What questions would you want Casa to answer?\ne.g. How do I unlock the secret ending?\nWhat's the best build for a new player?"}
+                  style={{ background:t.bgInput, border:`1px solid ${t.border}`, borderRadius:10, padding:'12px 14px', fontSize:13, color:t.textPrimary, fontFamily:"'Barlow',sans-serif", outline:'none', resize:'vertical', lineHeight:1.65 }} />
+              </div>
+              <button onClick={submit} disabled={!gameTitle.trim() || sending}
+                style={{ padding:'14px', background:!gameTitle.trim() || sending ? t.bgInput : 'linear-gradient(135deg,#FF6B1A,#FF8A42)', border:`1px solid ${!gameTitle.trim() || sending ? t.border : 'transparent'}`, borderRadius:12, color:!gameTitle.trim() || sending ? t.textMuted : '#fff', fontSize:15, fontWeight:700, cursor:!gameTitle.trim() || sending ? 'not-allowed' : 'pointer', fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:1, boxShadow:!gameTitle.trim() || sending ? 'none' : '0 4px 20px rgba(255,107,26,0.35)', transition:'all 0.2s' }}>
+                {sending ? 'Sending…' : '🎮  Send Game Request'}
+              </button>
+              {sendError && (
+                <div style={{ padding:'10px 14px', background:'rgba(239,68,68,0.1)', border:'1px solid rgba(239,68,68,0.3)', borderRadius:8, fontSize:12, color:'#F87171', textAlign:'center' }}>
+                  {sendError}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    };
+
+
+    // ── Settings Panel ────────────────────────────────────────────────────────
+    const SettingsPanel = ({ settings, setSettings, t, updateStatus, setUpdateStatus }) => {
+      const [rebinding, setRebinding]         = useState(false);
+      const [inputDevices,  setInputDevices]  = useState([]);
+      const [outputDevices, setOutputDevices] = useState([]);
+      const [ttsVoices,     setTtsVoices]     = useState([]);
+
+      useEffect(() => {
+        if (!navigator.mediaDevices) return;
+        navigator.mediaDevices.enumerateDevices().then(devs => {
+          setInputDevices(devs.filter(d => d.kind === 'audioinput'));
+          setOutputDevices(devs.filter(d => d.kind === 'audiooutput'));
+        }).catch(() => {});
+      }, []);
+
+      useEffect(() => {
+        const load = () => {
+          const vs = window.speechSynthesis?.getVoices() ?? [];
+          if (vs.length) setTtsVoices([...vs]);
+        };
+        load();
+        // Natural/neural voices can take a few seconds to register
+        const t1 = setTimeout(load, 500);
+        const t2 = setTimeout(load, 2000);
+        window.speechSynthesis?.addEventListener('voiceschanged', load);
+        return () => {
+          clearTimeout(t1); clearTimeout(t2);
+          window.speechSynthesis?.removeEventListener('voiceschanged', load);
+        };
+      }, []);
+
+      useEffect(() => {
+        if (!rebinding) return;
+        const h = e => {
+          e.preventDefault();
+          const parts = [];
+          if (e.ctrlKey)  parts.push('Ctrl');
+          if (e.altKey)   parts.push('Alt');
+          if (e.shiftKey) parts.push('Shift');
+          if (!['Control','Alt','Shift'].includes(e.key))
+            parts.push(e.key.length === 1 ? e.key.toUpperCase() : e.key);
+          if (parts.length >= 2) {
+            const hk = parts.join('+');
+            setSettings(s => ({ ...s, overlayHotkey:hk }));
+            _ipc?.invoke('save-overlay-hotkey', hk).catch(() => {});
+            setRebinding(false);
+          }
+        };
+        window.addEventListener('keydown', h);
+        return () => window.removeEventListener('keydown', h);
+      }, [rebinding, setSettings]);
+
+      const si = { background:t.bgInput, border:`1px solid ${t.border}`, borderRadius:8, padding:'7px 12px', fontSize:13, fontFamily:"'Barlow',sans-serif", color:t.textPrimary, outline:'none', minWidth:150 };
+
+      return (
+        <div style={{ flex:1, overflowY:'auto', padding:'28px 32px', background:t.bgApp, display:'grid', gridTemplateColumns:'1fr 1fr', gap:18, alignContent:'start' }}>
+          <SCard title="IDENTITY" icon="👤" t={t}>
+            <SRow label="Your Username" hint="Casa uses your name to personalize" t={t}>
+              <input style={si} value={settings.username} placeholder="Enter your name…"
+                onChange={e => setSettings(s => ({ ...s, username:e.target.value }))} />
+            </SRow>
+            <SRow label="Assistant Voice" hint="Uses your Windows TTS voices" t={t}>
+              <div style={{ display:'flex', gap:6, alignItems:'center', flex:1 }}>
+                <select style={{ ...si, flex:1, cursor:'pointer' }} value={settings.voiceName}
+                  onChange={e => setSettings(s => ({ ...s, voiceName:e.target.value }))}>
+                  <option value="">— Auto (system default) —</option>
+                  {ttsVoices.map(v => (
+                    <option key={v.name} value={v.name}>{v.name}{v.lang ? ` (${v.lang})` : ''}</option>
+                  ))}
+                </select>
+                <button onClick={() => {
+                  const utt = new SpeechSynthesisUtterance("Hey, I'm Casa. Ready to help you game!");
+                  if (settings.voiceName) {
+                    const v = window.speechSynthesis.getVoices().find(x => x.name === settings.voiceName);
+                    if (v) utt.voice = v;
+                  }
+                  utt.rate = settings.speakRate ?? 1.0;
+                  utt.volume = (settings.volume ?? 80) / 100;
+                  window.speechSynthesis.cancel();
+                  window.speechSynthesis.speak(utt);
+                }} style={{ padding:'6px 12px', background:t.bgInput, border:`1px solid ${t.border}`, borderRadius:8, color:t.textSecond, fontFamily:"'Barlow',sans-serif", fontWeight:600, fontSize:11, cursor:'pointer', whiteSpace:'nowrap' }}>
+                  ▶ Test
+                </button>
+                <button onClick={() => {
+                  const vs = window.speechSynthesis?.getVoices() ?? [];
+                  setTtsVoices([...vs]);
+                }} title="Refresh voice list" style={{ padding:'6px 10px', background:t.bgInput, border:`1px solid ${t.border}`, borderRadius:8, color:t.textSecond, fontFamily:"'Barlow',sans-serif", fontWeight:600, fontSize:13, cursor:'pointer' }}>
+                  ↺
+                </button>
+              </div>
+            </SRow>
+          </SCard>
+
+          <SCard title="AUDIO & SPEECH" icon="🔊" t={t}>
+            <SRow label="Voice Responses" hint="Casa reads answers aloud" t={t}>
+              <SToggle checked={settings.voiceEnabled} onChange={e => setSettings(s => ({ ...s, voiceEnabled:e.target.checked }))} t={t} />
+            </SRow>
+            <SRow label="Speak Speed" t={t}>
+              <SSlider value={settings.speakRate} min={0.5} max={2} step={0.1}
+                onChange={e => setSettings(s => ({ ...s, speakRate:parseFloat(e.target.value) }))}
+                display={`${settings.speakRate}x`} t={t} />
+            </SRow>
+            <SRow label="Volume" t={t}>
+              <SSlider value={settings.volume} min={0} max={100} step={5}
+                onChange={e => setSettings(s => ({ ...s, volume:parseInt(e.target.value) }))}
+                display={`${settings.volume}%`} t={t} />
+            </SRow>
+            {inputDevices.length > 0 && (
+              <SRow label="Microphone" hint="Input device" t={t}>
+                <select style={{ ...si, cursor:'pointer', maxWidth:200 }} value={settings.inputDeviceId || ''}
+                  onChange={e => setSettings(s => ({ ...s, inputDeviceId:e.target.value }))}>
+                  <option value="">System Default</option>
+                  {inputDevices.map(d => <option key={d.deviceId} value={d.deviceId}>{d.label || `Mic ${d.deviceId.slice(0,8)}`}</option>)}
+                </select>
+              </SRow>
+            )}
+            {outputDevices.length > 0 && (
+              <SRow label="Speaker" hint="Output device" t={t}>
+                <select style={{ ...si, cursor:'pointer', maxWidth:200 }} value={settings.outputDeviceId || ''}
+                  onChange={e => setSettings(s => ({ ...s, outputDeviceId:e.target.value }))}>
+                  <option value="">System Default</option>
+                  {outputDevices.map(d => <option key={d.deviceId} value={d.deviceId}>{d.label || `Speaker ${d.deviceId.slice(0,8)}`}</option>)}
+                </select>
+              </SRow>
+            )}
+          </SCard>
+
+          <SCard title="WAKE WORD" icon="🎤" t={t}>
+            <SRow label={`"Hey Casa" Activation`} hint="Hands-free trigger" t={t}>
+              <SToggle checked={settings.wakeWordEnabled} onChange={e => setSettings(s => ({ ...s, wakeWordEnabled:e.target.checked }))} t={t} />
+            </SRow>
+            <SRow label="Interrupt Speech" hint="Stop speaking when wake word heard" t={t}>
+              <SToggle checked={settings.stopOnWake} onChange={e => setSettings(s => ({ ...s, stopOnWake:e.target.checked }))} t={t} />
+            </SRow>
+          </SCard>
+
+          <SCard title="OVERLAY / PiP" icon="🖥️" t={t}>
+            <SRow label="Toggle Hotkey" hint="Press 2+ keys to rebind" t={t}>
+              <button onClick={() => setRebinding(true)}
+                style={{ padding:'6px 14px', background:rebinding ? t.orangeSoft : t.bgInput, border:`1px solid ${rebinding ? '#FF6B1A' : t.border}`, borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:12, color:rebinding ? '#FF6B1A' : t.textPrimary, cursor:'pointer' }}>
+                {rebinding ? 'Press keys…' : settings.overlayHotkey}
+              </button>
+            </SRow>
+            <SRow label="Overlay Opacity" t={t}>
+              <SSlider value={settings.overlayOpacity} min={30} max={100} step={5}
+                onChange={e => setSettings(s => ({ ...s, overlayOpacity:parseInt(e.target.value) }))}
+                display={`${settings.overlayOpacity}%`} t={t} />
+            </SRow>
+            <div style={{ padding:'10px 14px', background:t.orangeSoft, border:`1px solid ${t.orangeBorder}`, borderRadius:10, fontSize:12, color:t.textMuted, lineHeight:1.6 }}>
+              💡 The overlay appears <strong>above your game</strong> as a separate window. Use the hotkey while gaming to toggle it.
+            </div>
+          </SCard>
+
+          <SCard title="SCREENSHOT" icon="📸" t={t}>
+            <SRow label="Include Screenshot with Questions" hint="Snaps your game screen when you ask — no continuous capture" t={t}>
+              <SToggle checked={settings.includeScreenshot} onChange={e => setSettings(s => ({ ...s, includeScreenshot:e.target.checked }))} t={t} />
+            </SRow>
+            <SRow label="Screenshot Resolution" hint="Lower = less GPU load" t={t}>
+              <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+                <select style={{ ...si, cursor:'pointer' }} value={settings.captureResolution}
+                  onChange={e => setSettings(s => ({ ...s, captureResolution:e.target.value }))}>
+                  <option value="auto">Auto (640×360)</option>
+                  <option value="low">Low (320×180) — lightest</option>
+                  <option value="medium">Medium (640×360)</option>
+                  <option value="high">High (1280×720)</option>
+                </select>
+                <button title="Auto-detect best resolution for your system" onClick={() => {
+                  const cores = navigator.hardwareConcurrency || 4;
+                  const mem   = navigator.deviceMemory;
+                  const res   = (cores <= 4 || (mem && mem <= 4)) ? 'low' : 'medium';
+                  setSettings(s => ({ ...s, captureResolution:res }));
+                }} style={{ padding:'6px 10px', background:t.orangeSoft, border:`1px solid ${t.orangeBorder}`, borderRadius:8, color:t.orange, fontFamily:"'Barlow',sans-serif", fontWeight:700, fontSize:11, cursor:'pointer', whiteSpace:'nowrap' }}>
+                  Auto-Detect
+                </button>
+              </div>
+            </SRow>
+          </SCard>
+
+          <SCard title="APPEARANCE" icon="🎨" t={t}>
+            <SRow label="Dark Mode" t={t}>
+              <SToggle checked={settings.darkMode} onChange={e => setSettings(s => ({ ...s, darkMode:e.target.checked }))} t={t} />
+            </SRow>
+            <SRow label="Web Search" hint="Search web before answering" t={t}>
+              <SToggle checked={settings.webSearch} onChange={e => setSettings(s => ({ ...s, webSearch:e.target.checked }))} t={t} />
+            </SRow>
+          </SCard>
+
+          <SCard title="PERFORMANCE" icon="⚡" t={t}>
+            <SRow label="CPU Rendering" hint="Reduces GPU load — restart required" t={t}>
+              <SToggle checked={!!settings.disableHwAccel} onChange={e => setSettings(s => ({ ...s, disableHwAccel:e.target.checked }))} t={t} />
+            </SRow>
+            {settings.disableHwAccel && (
+              <div style={{ padding:'8px 12px', background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.25)', borderRadius:9, fontSize:11, color:'#EF4444' }}>
+                Restart CasaGG to apply CPU rendering
+              </div>
+            )}
+            <SRow label="Run in Background" hint="Minimize to tray instead of closing" t={t}>
+              <SToggle checked={settings.runInBackground !== false} onChange={e => {
+                const val = e.target.checked;
+                setSettings(s => ({ ...s, runInBackground:val }));
+                _ipc?.invoke('set-run-background', val).catch(() => {});
+              }} t={t} />
+            </SRow>
+            <SRow label="Start with Windows" hint="Launch CasaGG automatically on login" t={t}>
+              <SToggle checked={!!settings.startOnBoot} onChange={e => {
+                const val = e.target.checked;
+                setSettings(s => ({ ...s, startOnBoot:val }));
+                _ipc?.invoke('set-login-item', val).catch(() => {});
+              }} t={t} />
+            </SRow>
+          </SCard>
+
+          <SCard title="SYSTEM" icon="⚙️" t={t}>
+            {[
+              ['Cores',      `${navigator.hardwareConcurrency || '?'} logical`],
+              ['RAM',        navigator.deviceMemory ? `${navigator.deviceMemory} GB` : 'Unknown'],
+              ['Timezone',   getTZ()],
+              ['Local Time', getTime()],
+              ['TTS Engine', window.speechSynthesis ? '✓ Available' : '✗ Unavailable'],
+              ['Version',    'CasaGG v3.1'],
+            ].map(([k,v]) => (
+              <div key={k} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', fontSize:13 }}>
+                <span style={{ color:t.textMuted }}>{k}</span>
+                <span style={{ fontWeight:600, color:v.startsWith('✓') ? '#22C55E' : v.startsWith('✗') ? '#EF4444' : t.textPrimary, fontFamily:"'DM Mono',monospace", fontSize:11 }}>{v}</span>
+              </div>
+            ))}
+            <div style={{ borderTop:`1px solid ${t.border}`, paddingTop:12, marginTop:4, display:'flex', alignItems:'center', justifyContent:'space-between', gap:12 }}>
+              <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
+                <span style={{ fontSize:12, fontWeight:600, color:t.textSecond }}>Software Update</span>
+                <span style={{ fontSize:11, color:
+                  updateStatus === 'up-to-date' ? '#22C55E' :
+                  updateStatus === 'error'      ? '#EF4444' :
+                  updateStatus === 'checking'   ? '#818CF8' :
+                  updateStatus === 'dev'        ? t.textMuted : t.textMuted }}>
+                  {updateStatus === 'checking'   ? 'Checking for updates…' :
+                   updateStatus === 'up-to-date' ? 'You\'re on the latest version' :
+                   updateStatus === 'error'      ? 'Update check failed' :
+                   updateStatus === 'dev'        ? 'Dev mode — updates disabled' :
+                   'Check if a new version is available'}
+                </span>
+              </div>
+              <button
+                disabled={updateStatus === 'checking'}
+                onClick={async () => {
+                  setUpdateStatus('checking');
+                  const r = await _ipc?.invoke('check-for-updates').catch(() => ({ status: 'error' }));
+                  if (r?.status !== 'checking') setUpdateStatus(r?.status || 'error');
+                }}
+                style={{ padding:'6px 18px', background: updateStatus === 'checking' ? t.bgInput : 'linear-gradient(135deg,#FF6B1A,#FF8A42)', border:`1px solid ${updateStatus === 'checking' ? t.border : 'transparent'}`, borderRadius:20, color: updateStatus === 'checking' ? t.textMuted : '#fff', fontSize:12, fontWeight:700, cursor: updateStatus === 'checking' ? 'not-allowed' : 'pointer', fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:0.5, whiteSpace:'nowrap', flexShrink:0 }}>
+                {updateStatus === 'checking' ? 'Checking…' : 'Check for Updates'}
+              </button>
+            </div>
+          </SCard>
+        </div>
+      );
+    };
+
+    // ── Main App ──────────────────────────────────────────────────────────────
+    function CasaGG() {
+      const DEFAULT = {
+        username:'', voiceGender:'female', voiceName:'', speakRate:1.0, volume:80,
+        voiceEnabled:true, wakeWordEnabled:true, stopOnWake:true,
+        overlayHotkey:'Ctrl+Shift+G', overlayOpacity:90,
+        includeScreenshot:true, captureResolution:'auto',
+        disableHwAccel:false, runInBackground:true, startOnBoot:false,
+        darkMode:true,
+        webSearch:true, inputDeviceId:'', outputDeviceId:''
+      };
+
+      const CAP_RES = { auto:{w:640,h:360}, low:{w:320,h:180}, medium:{w:640,h:360}, high:{w:1280,h:720} };
+
+      const [showIntro,      setShowIntro]      = useState(true);
+      const [settings,       setSettings]       = useState(DEFAULT);
+      const [settingsReady,  setSettingsReady]  = useState(false);
+      const [tab,            setTab]            = useState('chat');
+      const [messages,       setMessages]       = useState([]);
+      const [input,          setInput]          = useState('');
+      const [loading,        setLoading]        = useState(false);
+      const [speaking,       setSpeaking]       = useState(false);
+      const [updateReady,    setUpdateReady]    = useState(false);
+      const [updateVersion,  setUpdateVersion]  = useState('');
+      const [updateNotes,    setUpdateNotes]    = useState('');
+      const [updateStatus,   setUpdateStatus]   = useState('idle'); // idle|checking|up-to-date|error
+      const [listening,      setListening]      = useState(false);
+      const [overlayOpen,    setOverlayOpen]    = useState(false);
+      const [showWinPicker,  setShowWinPicker]  = useState(false);
+      const [detectedGame,   setDetectedGame]   = useState(null);
+      const [selectedWindow, setSelectedWindow] = useState(null);
+      const [localTime,      setLocalTime]      = useState(getTime());
+      const [lastAnswer,     setLastAnswer]     = useState('');
+      const [history,        setHistory]        = useState([]);
+      const [wakeActive,     setWakeActive]     = useState(false);
+      const [wakeError,      setWakeError]      = useState('');
+      const [speechReady,    setSpeechReady]    = useState(false);
+      const [interimText,    setInterimText]    = useState('');
+      const [speechMode,     setSpeechMode]     = useState('wake'); // wake | dictation | paused
+      const [searchStatus,   setSearchStatus]   = useState('');
+
+      // Easter egg: triple-click logo
+      const logoClicks = useRef(0);
+      const logoTimer  = useRef(null);
+
+      const t = THEMES[settings.darkMode ? 'dark' : 'light'];
+      const messagesEnd = useRef(null);
+      const convRef       = useRef([]);
+      const recRef          = useRef(null);
+      const webRecRef       = useRef(null);
+      const handleSendRef   = useRef(null);
+      const startListenRef    = useRef(null);
+      const finishListeningRef = useRef(null);
+      const speechReadyRef    = useRef(false);
+      const vizCanvasRef  = useRef(null);
+      const vizFrameRef   = useRef(null);
+      const vizStreamRef  = useRef(null);
+      const vizCtxRef     = useRef(null);
+
+      // ── Load all settings on startup ───────────────────────────────────────
+      useEffect(() => {
+        if (!_ipc) { setSettingsReady(true); return; }
+        Promise.all([
+          _ipc.invoke('get-api-key').catch(() => ''),
+          _ipc.invoke('get-settings').catch(() => ({}))
+        ]).then(([apiKey, saved]) => {
+          setSettings(s => ({ ...s, ...(saved || {}), ...(apiKey ? { apiKey } : {}) }));
+          setSettingsReady(true);
+        }).catch(() => setSettingsReady(true));
+      }, []);
+
+      // ── Persist all settings whenever they change ──────────────────────────
+      useEffect(() => {
+        if (!settingsReady || !_ipc) return;
+        const { apiKey, ...rest } = settings;
+        _ipc.invoke('save-settings', rest).catch(() => {});
+        if (apiKey) _ipc.invoke('save-api-key', apiKey).catch(() => {});
+      }, [settings, settingsReady]);
+
+      // ── Sync overlay opacity to window ─────────────────────────────────────
+      useEffect(() => {
+        if (!settingsReady) return;
+        _ipc?.invoke('set-overlay-opacity', settings.overlayOpacity).catch(() => {});
+      }, [settings.overlayOpacity, settingsReady]);
+
+      // ── Clock ──────────────────────────────────────────────────────────────
+      useEffect(() => {
+        const i = setInterval(() => setLocalTime(getTime()), 30000);
+        return () => clearInterval(i);
+      }, []);
+
+      // ── Auto-scroll ────────────────────────────────────────────────────────
+      useEffect(() => { messagesEnd.current?.scrollIntoView({ behavior:'smooth' }); }, [messages, loading]);
+
+      // ── IPC: overlay state sync & overlay questions ────────────────────────
+      useEffect(() => {
+        if (!_ipc) return;
+        const onOverlayState = (_e, open) => setOverlayOpen(open);
+        // Use ref so we always call the latest handleSend with current settings/apiKey
+        const onOverlayAsk   = (_e, q)    => handleSendRef.current?.(q);
+        const onUpdateAvailable    = (_e, v, notes) => { setUpdateVersion(v || ''); setUpdateNotes(notes || ''); setUpdateStatus('idle'); };
+        const onUpdateDownloaded   = ()             => setUpdateReady(true);
+        const onUpdateNotAvailable = ()             => { setUpdateStatus('up-to-date'); setTimeout(() => setUpdateStatus('idle'), 6000); };
+        const onUpdateError        = (_e, msg)      => { setUpdateStatus('error'); setTimeout(() => setUpdateStatus('idle'), 6000); };
+        _ipc.on('overlay-state',        onOverlayState);
+        _ipc.on('ask-from-overlay',     onOverlayAsk);
+        _ipc.on('update-available',     onUpdateAvailable);
+        _ipc.on('update-downloaded',    onUpdateDownloaded);
+        _ipc.on('update-not-available', onUpdateNotAvailable);
+        _ipc.on('update-error',         onUpdateError);
+        return () => {
+          _ipc.removeListener('overlay-state',        onOverlayState);
+          _ipc.removeListener('ask-from-overlay',     onOverlayAsk);
+          _ipc.removeListener('update-available',     onUpdateAvailable);
+          _ipc.removeListener('update-downloaded',    onUpdateDownloaded);
+          _ipc.removeListener('update-not-available', onUpdateNotAvailable);
+          _ipc.removeListener('update-error',         onUpdateError);
+        };
+      }, []); // eslint-disable-line
+
+      // ── In-window hotkey fallback (when CasaGG window is focused) ─────────
+      useEffect(() => {
+        const h = e => {
+          const combo = [e.ctrlKey && 'Ctrl', e.altKey && 'Alt', e.shiftKey && 'Shift',
+            !['Control','Alt','Shift'].includes(e.key) && (e.key.length === 1 ? e.key.toUpperCase() : e.key)
+          ].filter(Boolean).join('+');
+          if (combo === settings.overlayHotkey) {
+            e.preventDefault();
+            _ipc?.invoke('toggle-overlay-window').catch(() => {});
+          }
+        };
+        window.addEventListener('keydown', h);
+        return () => window.removeEventListener('keydown', h);
+      }, [settings.overlayHotkey]);
+
+      // ── Mic visualizer — only during active question recording ────────────
+      useEffect(() => {
+        const on = listening;
+        if (!on) {
+          if (vizFrameRef.current) { cancelAnimationFrame(vizFrameRef.current); vizFrameRef.current = null; }
+          vizStreamRef.current?.getTracks().forEach(t => t.stop()); vizStreamRef.current = null;
+          vizCtxRef.current = null;
+          const cv = vizCanvasRef.current;
+          if (cv) { const c = cv.getContext('2d'); c.clearRect(0,0,cv.width,cv.height); }
+          return;
+        }
+        navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => {
+          vizStreamRef.current = stream;
+          const actx = new (window.AudioContext || window.webkitAudioContext)();
+          const analyser = actx.createAnalyser(); analyser.fftSize = 64;
+          actx.createMediaStreamSource(stream).connect(analyser);
+          const data = new Uint8Array(analyser.frequencyBinCount);
+          const draw = () => {
+            vizFrameRef.current = requestAnimationFrame(draw);
+            const cv = vizCanvasRef.current; if (!cv) return;
+            analyser.getByteFrequencyData(data);
+            const ctx = cv.getContext('2d'); ctx.clearRect(0,0,cv.width,cv.height);
+            const bars = 18; const bw = (cv.width - bars + 1) / bars;
+            for (let i = 0; i < bars; i++) {
+              const v = data[Math.floor(i * data.length / bars)] / 255;
+              const h = Math.max(3, v * cv.height);
+              ctx.fillStyle = `rgba(255,107,26,${0.35 + v * 0.65})`;
+              ctx.beginPath();
+              ctx.roundRect(i*(bw+1), cv.height - h, bw, h, 2);
+              ctx.fill();
+            }
+          };
+          draw();
+        }).catch(() => {});
+        return () => {
+          if (vizFrameRef.current) { cancelAnimationFrame(vizFrameRef.current); vizFrameRef.current = null; }
+          vizStreamRef.current?.getTracks().forEach(t => t.stop()); vizStreamRef.current = null;
+        };
+      }, [listening]);
+
+      // ── Windows Speech API bridge events ──────────────────────────────────
+      // Use a ref so the handler always sees current settings without re-registering
+      const settingsRef = useRef(settings);
+      useEffect(() => { settingsRef.current = settings; }, [settings]);
+      useEffect(() => { speechReadyRef.current = speechReady; }, [speechReady]);
+
+      useEffect(() => {
+        if (!_ipc) return;
+
+        const onSpeech = (_e, msg) => {
+          const s = settingsRef.current;
+          switch (msg.event) {
+            case 'ready':
+              setSpeechReady(true);
+              setWakeError('');
+              // Send initial mode based on current toggle state
+              _ipc.send('speech-cmd', s.wakeWordEnabled ? 'wake' : 'pause');
+              break;
+
+            case 'mode':
+              setSpeechMode(msg.text); // 'wake' | 'dictation' | 'paused'
+              setWakeActive(msg.text === 'wake');
+              break;
+
+            case 'detected':
+              // Mic heard something — pulse the indicator briefly
+              setWakeActive(true);
+              break;
+
+            case 'wake':
+              setWakeActive(false);
+              setInterimText('');
+              if (s.stopOnWake) { stopSpeak(); setSpeaking(false); }
+              try {
+                const sfx = new Audio(assetPath('casaplop.mp3'));
+                sfx.volume = 0.25;
+                sfx.play().catch(function(){});
+              } catch(e) {}
+              setTimeout(function() { startListenRef.current?.(); }, 400);
+              break;
+
+            case 'interim':
+              break; // no live preview — wait for final result
+
+            case 'speech': {
+              // Only fires in Windows DictationGrammar fallback mode
+              setSpeechMode('wake');
+              setWakeActive(s.wakeWordEnabled);
+              finishListeningRef.current?.(msg.text || '');
+              break;
+            }
+
+            case 'error':
+              setWakeActive(false);
+              setSpeechReady(false);
+              setWakeError(msg.text || 'Speech engine error');
+              break;
+
+            case 'pong':
+              setSpeechReady(true);
+              setWakeError('');
+              _ipc.send('speech-cmd', s.wakeWordEnabled ? 'wake' : 'pause');
+              break;
+
+            case 'stop':
+              // "Ok Casa" — stop speaking immediately
+              stopSpeak();
+              setSpeaking(false);
+              break;
+          }
+        };
+
+        _ipc.on('speech-event', onSpeech);
+
+        // Ping bridge after page load — catches the case where 'ready' fired
+        // before the renderer was listening (race condition on app start)
+        const pingTimer = setTimeout(function() {
+          _ipc.send('speech-cmd', 'ping');
+        }, 800);
+
+        return function() {
+          clearTimeout(pingTimer);
+          _ipc.removeListener('speech-event', onSpeech);
+        };
+      }, []); // register once — uses settingsRef for current values
+
+      // Sync wake word toggle to bridge (pause/resume, never kill the process)
+      useEffect(() => {
+        if (!_ipc || !speechReady) return;
+        if (settings.wakeWordEnabled) {
+          _ipc.send('speech-cmd', 'wake');
+          setWakeActive(true);
+        } else {
+          _ipc.send('speech-cmd', 'pause');
+          setWakeActive(false);
+        }
+        setWakeError('');
+      }, [settings.wakeWordEnabled, speechReady]);
+
+
+      // ── Voice helpers ──────────────────────────────────────────────────────
+      const finishListening = text => {
+        if (recRef.current) { clearTimeout(recRef.current); recRef.current = null; }
+        setListening(false);
+        setInterimText('');
+        if (_ipc) _ipc.send('speech-cmd', settingsRef.current.wakeWordEnabled ? 'wake' : 'pause');
+        const spoken = (text || '').trim();
+        if (spoken && !/nevermind|never mind/i.test(spoken) && handleSendRef.current) {
+          handleSendRef.current(spoken);
+        }
+      };
+      finishListeningRef.current = finishListening;
+
+      const startListening = () => {
+        if (!_ipc || !speechReadyRef.current) return;
+        setListening(true);
+        setInterimText('');
+
+        const s = settingsRef.current;
+
+        if (s.groqApiKey) {
+          // ── High-accuracy path: MediaRecorder → Groq Whisper ────────────
+          navigator.mediaDevices.getUserMedia({ audio: true, video: false }).then(stream => {
+            const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : '';
+            const recorder  = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+            const chunks    = [];
+            recorder.ondataavailable = e => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+
+            recorder.onstop = async () => {
+              stream.getTracks().forEach(t => t.stop());
+              if (!chunks.length) { finishListening(''); return; }
+              const blob        = new Blob(chunks, { type: mimeType || 'audio/webm' });
+              const arrayBuffer = await blob.arrayBuffer();
+              const audioArray  = Array.from(new Uint8Array(arrayBuffer));
+              try {
+                const text = await _ipc.invoke('transcribe-audio', audioArray);
+                finishListening(text);
+              } catch { finishListening(''); }
+            };
+
+            // Silence detection — stop after 2 s quiet, need at least 1 s of speech first
+            const audioCtx  = new (window.AudioContext || window.webkitAudioContext)();
+            const analyser  = audioCtx.createAnalyser();
+            analyser.fftSize = 512;
+            audioCtx.createMediaStreamSource(stream).connect(analyser);
+            const freqData  = new Uint8Array(analyser.frequencyBinCount);
+            let silenceMs   = 0;
+            let hadAudio    = false;
+
+            const silenceCheck = setInterval(() => {
+              analyser.getByteFrequencyData(freqData);
+              const avg = freqData.reduce((a, b) => a + b, 0) / freqData.length;
+              if (avg > 8) { hadAudio = true; silenceMs = 0; }
+              else if (hadAudio) {
+                silenceMs += 150;
+                if (silenceMs >= 2000) { clearInterval(silenceCheck); if (recorder.state !== 'inactive') recorder.stop(); }
+              }
+            }, 150);
+
+            // Hard 30-second cutoff
+            recRef.current = setTimeout(() => {
+              clearInterval(silenceCheck);
+              if (recorder.state !== 'inactive') recorder.stop();
+              else finishListening('');
+            }, 30000);
+
+            recorder.start(250);
+          }).catch(() => finishListening(''));
+
+        } else {
+          // ── Fallback: Windows DictationGrammar via C# bridge ─────────────
+          if (recRef.current) clearTimeout(recRef.current);
+          recRef.current = setTimeout(() => {
+            setListening(false);
+            setInterimText('');
+            if (_ipc) _ipc.send('speech-cmd', settingsRef.current.wakeWordEnabled ? 'wake' : 'pause');
+            recRef.current = null;
+          }, 20000);
+          _ipc.send('speech-cmd', 'dictate');
+        }
+      };
+      startListenRef.current = startListening;
+
+      const stopListening = () => {
+        if (recRef.current) { clearTimeout(recRef.current); recRef.current = null; }
+        setListening(false);
+        setInterimText('');
+        if (_ipc) _ipc.send('speech-cmd', settingsRef.current.wakeWordEnabled ? 'wake' : 'pause');
+      };
+      const stopAll = () => { stopSpeak(); setSpeaking(false); stopListening(); };
+
+      // ── Window select ──────────────────────────────────────────────────────
+      const handleWindowSelect = win => {
+        setSelectedWindow(win);
+        setDetectedGame(win.name);
+        setShowWinPicker(false);
+      };
+
+      // ── Logo easter egg: 3 fast clicks ────────────────────────────────────
+      const handleLogoClick = () => {
+        logoClicks.current += 1;
+        if (logoTimer.current) clearTimeout(logoTimer.current);
+        if (logoClicks.current >= 3) {
+          logoClicks.current = 0;
+          try {
+            const sfx = new Audio(assetPath('sheknowseasteregg.mp3'));
+            sfx.volume = 1.0;
+            sfx.play().catch(() => {});
+          } catch {}
+        } else {
+          logoTimer.current = setTimeout(() => { logoClicks.current = 0; }, 700);
+        }
+      };
+
+      // ── Overlay toggle button ──────────────────────────────────────────────
+      const toggleOverlay = async () => {
+        try {
+          const nowOpen = await _ipc?.invoke('toggle-overlay-window');
+          setOverlayOpen(!!nowOpen);
+        } catch {
+          setOverlayOpen(o => !o);
+        }
+      };
+
+      // ── Core AI call ───────────────────────────────────────────────────────
+      const callCasa = async (msg, shot) => {
+        if (!_ipc) throw new Error("Not connected.");
+
+        let searchResults = [];
+        if (settings.webSearch && _ipc) {
+          setSearchStatus('Searching the web…');
+          try { searchResults = await _ipc.invoke('web-search', detectedGame ? `${detectedGame} ${msg}` : msg) || []; }
+          catch {}
+          setSearchStatus('');
+        }
+
+        const sys = buildSystemPrompt(settings.username, getTZ(), detectedGame, searchResults);
+        convRef.current = [...convRef.current, { role:'user', content:msg }].slice(-14);
+
+        let userContent = msg;
+        if (shot) {
+          const b64 = shot.replace(/^data:image\/\w+;base64,/, '');
+          userContent = [
+            { type:'image', source:{ type:'base64', media_type:'image/png', data:b64 } },
+            { type:'text',  text:msg }
+          ];
+        }
+
+        const apiMessages = [
+          ...convRef.current.slice(0, -1),
+          { role:'user', content:userContent }
+        ];
+
+        const res = await _ipc.invoke('claude-chat', { system:sys, messages:apiMessages, maxTokens:1200, game:detectedGame });
+        if (!res.ok) throw new Error(res.error || 'API error');
+
+        const reply = res.data.content?.[0]?.text ?? "Couldn't get an answer — try again!";
+        convRef.current = [...convRef.current, { role:'assistant', content:reply }];
+        return { reply, source: res.source || 'api' };
+      };
+
+      // ── Knowledge base vote ────────────────────────────────────────────────
+      const voteAnswer = (cacheId, helpful, msgIdx) => {
+        if (!settings.fbProjectId || !settings.fbApiKey || !detectedGame || !_ipc) return;
+        _ipc.invoke('kb-vote', settings.fbProjectId, settings.fbApiKey, detectedGame, cacheId, helpful).catch(() => {});
+        setMessages(m => m.map((msg, i) => i === msgIdx ? { ...msg, voted: helpful ? 'up' : 'down' } : msg));
+      };
+
+      // ── Send message ───────────────────────────────────────────────────────
+      const handleSend = async text => {
+        const q = (text ?? input).trim();
+        if (!q || loading) return;
+        setInput('');
+        stopSpeak(); setSpeaking(false);
+        const ts = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+        setMessages(m => [...m, { role:'user', content:q, ts }]);
+        setLoading(true);
+
+        // Capture a single screenshot of the selected game window right now
+        let shot = null;
+        if (settings.includeScreenshot && selectedWindow && _ipc) {
+          try {
+            const res = CAP_RES[settings.captureResolution] || CAP_RES.auto;
+            shot = await _ipc.invoke('capture-window', selectedWindow.id, res.w, res.h);
+          } catch {}
+        }
+
+        _ipc?.invoke('overlay-status', 'Thinking…').catch(() => {});
+
+        try {
+          const { reply, source } = await callCasa(q, shot);
+
+          const rts = new Date().toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+          setMessages(m => [...m, { role:'assistant', content:reply, ts:rts, source }]);
+          setLastAnswer(reply);
+          setHistory(h => [{ q, ts:rts }, ...h].slice(0, 40));
+          _ipc?.invoke('update-overlay', reply).catch(() => {});
+          if (settings.voiceEnabled) { setSpeaking(true); doSpeak(reply, settings, () => setSpeaking(false)); }
+        } catch (err) {
+          setMessages(m => [...m, { role:'assistant', content:`⚠️ ${err.message}`, ts:'' }]);
+        }
+        setLoading(false);
+        setSearchStatus('');
+      };
+
+      handleSendRef.current = handleSend;
+
+      // ── CSS ────────────────────────────────────────────────────────────────
+      const css = `
+        @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800;900&family=Barlow:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap');
+        *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+        body,#root { height:100vh; overflow:hidden; font-family:'Barlow',sans-serif; background:${t.bgApp}; color:${t.textPrimary}; }
+        ::-webkit-scrollbar { width:5px; } ::-webkit-scrollbar-thumb { background:${t.border}; border-radius:3px; }
+        @keyframes blink  { 0%,100%{opacity:1} 50%{opacity:0.35} }
+        @keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
+        @keyframes glow   { 0%,100%{box-shadow:0 0 0 0 rgba(255,107,26,0.5)} 70%{box-shadow:0 0 0 12px rgba(255,107,26,0)} }
+        @keyframes wave   { 0%,100%{height:3px} 50%{height:15px} }
+        @keyframes listenRing { 0%{transform:scale(1);opacity:0.7} 100%{transform:scale(2.2);opacity:0} }
+        @keyframes spin   { to{transform:rotate(360deg)} }
+        .msg-in { animation:fadeUp 0.22s ease; }
+        .sb-qbtn:hover { background:${t.orangeSoft}!important; border-color:${t.orangeBorder}!important; color:#FF6B1A!important; }
+        select,input,textarea { color-scheme:${settings.darkMode ? 'dark' : 'light'}; }
+        input:focus,select:focus,textarea:focus { outline:none; border-color:#FF6B1A!important; }
+      `;
+
+      const handleIntroDone = useCallback(() => setShowIntro(false), []);
+      const greeting = settings.username ? `Hey ${settings.username}, I'm CasaGG` : "Hey! I'm CasaGG";
+
+      return (
+        <>
+          <style>{css}</style>
+          <div style={{ display:'flex', flexDirection:'column', height:'100vh', background:t.bgApp, color:t.textPrimary }}>
+
+            {/* ── TITLE BAR ─────────────────────────────────────────────── */}
+            <div style={{ height:58, background:t.bgPanel, borderBottom:`1px solid ${t.border}`, display:'flex', alignItems:'center', padding:'0 20px', gap:14, flexShrink:0, boxShadow:t.shadow }}>
+
+              {/* Logo — triple-click easter egg */}
+              <img
+                src={assetPath('casaorangegg.png')}
+                alt="Casa.GG"
+                onClick={handleLogoClick}
+                title="Casa.GG"
+                style={{ width:38, height:38, objectFit:'contain', cursor:'pointer', userSelect:'none', filter:'drop-shadow(0 2px 6px rgba(255,107,26,0.35))' }}
+              />
+
+              <div style={{ width:1, height:28, background:t.border }} />
+
+              {/* Tab switcher */}
+              <div style={{ display:'flex', gap:3, background:t.bgApp, border:`1px solid ${t.border}`, borderRadius:10, padding:3 }}>
+                {[['chat','🎮','Assistant'],['requests','🕹️','Request Games'],['settings','⚙️','Settings']].map(([id,ic,lbl]) => (
+                  <button key={id} onClick={() => setTab(id)}
+                    style={{ padding:'5px 18px', border:'none', borderRadius:7, cursor:'pointer', fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:13, letterSpacing:0.8, transition:'all 0.18s', background:tab===id ? '#FF6B1A' : 'transparent', color:tab===id ? '#fff' : t.textMuted, boxShadow:tab===id ? '0 2px 10px rgba(255,107,26,0.3)' : 'none' }}>
+                    {ic} {lbl}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:10 }}>
+                {detectedGame && (
+                  <div style={{ display:'flex', alignItems:'center', gap:6, padding:'4px 12px', background:t.orangeSoft, border:`1px solid ${t.orangeBorder}`, borderRadius:20 }}>
+                    <span style={{ width:6, height:6, borderRadius:'50%', background:t.success, boxShadow:`0 0 5px ${t.success}`, animation:'blink 2s infinite' }} />
+                    <span style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:12, color:t.orange, letterSpacing:0.5 }}>{detectedGame}</span>
+                  </div>
+                )}
+                <button onClick={() => setSettings(s => ({ ...s, darkMode:!s.darkMode }))}
+                  style={{ width:34, height:34, borderRadius:8, background:t.bgInput, border:`1px solid ${t.border}`, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16 }}>
+                  {settings.darkMode ? '☀️' : '🌙'}
+                </button>
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:t.textMuted, background:t.bgInput, border:`1px solid ${t.border}`, padding:'4px 10px', borderRadius:20 }}>
+                  🕐 {localTime}
+                </div>
+              </div>
+            </div>
+
+            {/* Update banner */}
+            {updateReady && (
+              <div style={{ minHeight:38, background:'linear-gradient(90deg,rgba(34,197,94,0.15),rgba(34,197,94,0.08))', borderBottom:'1px solid rgba(34,197,94,0.3)', display:'flex', alignItems:'center', padding:'0 20px', gap:12, flexShrink:0, flexWrap:'wrap' }}>
+                <span style={{ fontSize:14 }}>🎉</span>
+                <div style={{ display:'flex', flexDirection:'column', gap:1 }}>
+                  <span style={{ fontSize:12, fontWeight:700, color:'#22C55E' }}>CasaGG{updateVersion ? ` v${updateVersion}` : ''} is ready — restart to update</span>
+                  {updateNotes ? <span style={{ fontSize:11, color:'#86EFAC' }}>{updateNotes}</span> : null}
+                </div>
+                <button onClick={() => _ipc?.send('install-update')} style={{ marginLeft:'auto', padding:'4px 16px', background:'#22C55E', border:'none', borderRadius:20, color:'#fff', fontSize:12, fontWeight:700, cursor:'pointer', fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:0.5 }}>
+                  Restart Now
+                </button>
+              </div>
+            )}
+            {!updateReady && updateVersion && (
+              <div style={{ height:30, background:'rgba(99,102,241,0.08)', borderBottom:'1px solid rgba(99,102,241,0.2)', display:'flex', alignItems:'center', padding:'0 20px', gap:8, flexShrink:0 }}>
+                <div style={{ width:8, height:8, border:'2px solid #818CF8', borderTopColor:'transparent', borderRadius:'50%', animation:'spin 0.9s linear infinite' }} />
+                <span style={{ fontSize:11, color:'#818CF8', fontWeight:600 }}>Downloading update v{updateVersion}{updateNotes ? ` — ${updateNotes}` : ''}…</span>
+              </div>
+            )}
+
+            {/* Speaking banner */}
+            {speaking && (
+              <div style={{ height:36, background:t.orangeSoft, borderBottom:`1px solid ${t.orangeBorder}`, display:'flex', alignItems:'center', padding:'0 20px', gap:12, flexShrink:0 }}>
+                <div style={{ display:'flex', alignItems:'center', gap:3 }}>
+                  {[...Array(5)].map((_,i) => <div key={i} style={{ width:3, background:'#FF6B1A', borderRadius:2, animation:`wave 0.7s ${i*0.12}s ease-in-out infinite`, height:3 }} />)}
+                </div>
+                <span style={{ fontSize:12, fontWeight:600, color:'#FF6B1A' }}>Casa is speaking…</span>
+                <button onClick={stopAll} style={{ marginLeft:'auto', padding:'3px 14px', background:t.bgCard, border:`1px solid ${t.border}`, borderRadius:20, fontSize:11, color:t.textSecond, cursor:'pointer', fontWeight:600 }}>■ Stop</button>
+              </div>
+            )}
+
+            {/* Search status */}
+            {searchStatus && (
+              <div style={{ height:28, background:'rgba(6,182,212,0.08)', borderBottom:'1px solid rgba(6,182,212,0.2)', display:'flex', alignItems:'center', padding:'0 20px', gap:8, flexShrink:0 }}>
+                <div style={{ width:10, height:10, border:'2px solid #06b6d4', borderTopColor:'transparent', borderRadius:'50%', animation:'spin 0.7s linear infinite' }} />
+                <span style={{ fontSize:11, color:'#06b6d4', fontWeight:600 }}>{searchStatus}</span>
+              </div>
+            )}
+
+            <div style={{ display:'flex', flex:1, overflow:'hidden' }}>
+              {/* ── SIDEBAR ─────────────────────────────────────────────── */}
+              {tab === 'chat' && (
+                <div style={{ width:252, background:t.bgSidebar, borderRight:`1px solid ${t.border}`, display:'flex', flexDirection:'column', flexShrink:0 }}>
+
+                  {/* Game window selector */}
+                  <div style={{ padding:'16px 14px 12px' }}>
+                    <div style={{ fontSize:9, fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, letterSpacing:2.5, color:t.textMuted, marginBottom:8 }}>GAME DETECTION</div>
+                    <div style={{ border:`1px solid ${t.border}`, borderRadius:10, overflow:'hidden', background:t.bgCard }}>
+                      <div style={{ aspectRatio:'16/9', background:detectedGame ? t.orangeSoft : t.bgInput, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:5, borderBottom:`1px solid ${t.border}`, overflow:'hidden', position:'relative' }}>
+                        {detectedGame
+                            ? <><span style={{ fontSize:26 }}>🎮</span><span style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:12, color:t.orange }}>{detectedGame}</span></>
+                            : <><span style={{ fontSize:24, opacity:0.25 }}>🖥️</span><span style={{ fontSize:11, color:t.textMuted }}>No game selected</span></>
+                        }
+                      </div>
+                      <button onClick={() => setShowWinPicker(true)}
+                        style={{ width:'100%', padding:'9px 0', background:'transparent', border:'none', fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:11, letterSpacing:1.2, color:t.orange, cursor:'pointer', transition:'background 0.15s' }}
+                        onMouseEnter={e => e.currentTarget.style.background=t.orangeSoft}
+                        onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                        {detectedGame ? '⟳ CHANGE WINDOW' : '🔍 SELECT GAME WINDOW'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Wake word status */}
+                  <div style={{ padding:'0 14px 12px' }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px', background: listening ? 'rgba(255,107,26,0.12)' : settings.wakeWordEnabled ? t.orangeSoft : t.bgInput, border:`1px solid ${listening ? '#FF6B1A' : settings.wakeWordEnabled ? t.orangeBorder : t.border}`, borderRadius:10 }}>
+                      {/* Animated mic dot */}
+                      <div style={{ width:10, height:10, borderRadius:'50%', flexShrink:0,
+                        background: listening ? '#FF6B1A' : wakeActive ? '#FF9A56' : !settings.wakeWordEnabled ? t.textMuted : !speechReady ? '#888' : '#FF9A56',
+                        animation: listening || wakeActive ? 'glow 1s infinite' : 'none',
+                        boxShadow: listening ? '0 0 8px #FF6B1A' : 'none' }} />
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontSize:12, fontWeight:600, color:t.textPrimary }}>
+                          {listening ? '🎙 Listening — speak now…' : 'Say '}
+                          {!listening && <span style={{ color:t.orange, fontFamily:"'DM Mono',monospace", fontSize:11 }}>"Hey Casa"</span>}
+                        </div>
+                        <div style={{ fontSize:10, color: wakeError ? '#FF4444' : t.textMuted, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                          {wakeError || (
+                            !settings.wakeWordEnabled ? 'Off — enable in Settings' :
+                            !speechReady ? 'Starting speech engine…' :
+                            listening ? 'Listening — speak your question…' :
+                            wakeActive ? 'Mic active — listening for wake word' : 'Standby'
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Quick actions */}
+                  <div style={{ padding:'0 14px 12px' }}>
+                    <div style={{ fontSize:9, fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, letterSpacing:2.5, color:t.textMuted, marginBottom:8 }}>QUICK ACTIONS</div>
+                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:5 }}>
+                      {QUICK.map(({ icon, label }) => (
+                        <button key={label} className="sb-qbtn"
+                          onClick={() => handleSend(`${label}${detectedGame ? ` in ${detectedGame}` : ''}`)}
+                          style={{ padding:'7px 5px', background:t.bgCard, border:`1px solid ${t.border}`, borderRadius:8, fontFamily:"'Barlow',sans-serif", fontSize:11, fontWeight:600, color:t.textSecond, cursor:'pointer', transition:'all 0.15s', textAlign:'center' }}>
+                          {icon} {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* History */}
+                  <div style={{ padding:'0 14px 6px' }}>
+                    <div style={{ fontSize:9, fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, letterSpacing:2.5, color:t.textMuted }}>RECENT</div>
+                  </div>
+                  <div style={{ flex:1, overflowY:'auto', padding:'0 6px' }}>
+                    {history.length === 0
+                      ? <div style={{ fontSize:12, color:t.textMuted, padding:'6px 10px' }}>No history yet</div>
+                      : history.map((h, i) => (
+                        <div key={i} onClick={() => handleSend(h.q)}
+                          style={{ padding:'7px 10px', borderRadius:8, cursor:'pointer', marginBottom:1, transition:'background 0.12s' }}
+                          onMouseEnter={e => e.currentTarget.style.background=t.bgHover}
+                          onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                          <div style={{ fontSize:12, color:t.textPrimary, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{h.q}</div>
+                          <div style={{ fontSize:10, color:t.textMuted, fontFamily:"'DM Mono',monospace" }}>{h.ts}</div>
+                        </div>
+                      ))
+                    }
+                  </div>
+
+                  <div style={{ padding:'9px 14px', borderTop:`1px solid ${t.border}`, display:'flex', alignItems:'center', gap:6, fontSize:10, color:t.textMuted, fontFamily:"'DM Mono',monospace" }}>
+                    <span style={{ background:t.bgInput, border:`1px solid ${t.border}`, borderRadius:3, padding:'1px 5px', color:t.textSecond, fontSize:10 }}>{settings.overlayHotkey}</span>
+                    <span>Toggle Game Overlay</span>
+                  </div>
+                </div>
+              )}
+
+              {/* ── CHAT PANEL ───────────────────────────────────────────── */}
+              {tab === 'chat' ? (
+                <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}>
+                  <div style={{ flex:1, overflowY:'auto', padding:'28px 32px', display:'flex', flexDirection:'column', gap:20 }}>
+                    {messages.length === 0 ? (
+                      <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', textAlign:'center', gap:24, padding:48 }}>
+                        <img src={assetPath('casaorangegg.png')} alt="CasaGG"
+                          style={{ width:88, height:88, objectFit:'contain', filter:'drop-shadow(0 8px 32px rgba(255,107,26,0.45))', animation:'glow 3s infinite' }} />
+                        <div>
+                          <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:800, fontSize:28, color:t.textBright, marginBottom:10, letterSpacing:0.5 }}>{greeting}.</div>
+                          <div style={{ fontSize:15, color:t.textMuted, maxWidth:440, lineHeight:1.75 }}>
+                            Your real-time gaming buddy. Bosses, builds, lore, collectibles — I've got you.<br/>
+                            Say <strong style={{ color:t.orange }}>"Hey Casa"</strong> to go completely hands-free.
+                          </div>
+                        </div>
+                        <div style={{ display:'flex', flexWrap:'wrap', gap:8, justifyContent:'center', maxWidth:500 }}>
+                          {QUICK.map(({ icon, label }) => (
+                            <span key={label} className="sb-qbtn" onClick={() => handleSend(label)}
+                              style={{ padding:'7px 16px', background:t.bgCard, border:`1px solid ${t.border}`, borderRadius:20, fontSize:13, color:t.textSecond, cursor:'pointer', transition:'all 0.15s', fontWeight:500 }}>
+                              {icon} {label}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      messages.map((m, i) => (
+                        <div key={i} className="msg-in" style={{ display:'flex', gap:12, flexDirection:m.role === 'user' ? 'row-reverse' : 'row' }}>
+                          <div style={{ width:36, height:36, borderRadius:10, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden', marginTop:2, border:m.role === 'assistant' ? `1px solid ${t.border}` : 'none', boxShadow:m.role === 'user' ? t.shadowOrange : t.shadowCard, background:m.role === 'user' ? '#FF6B1A' : t.bgCard }}>
+                            {m.role === 'user'
+                              ? <span style={{ fontSize:18 }}>👤</span>
+                              : <img src={assetPath('casaorangegg.png')} alt="" style={{ width:36, height:36, objectFit:'contain' }} />
+                            }
+                          </div>
+                          <div style={{ maxWidth:'70%', display:'flex', flexDirection:'column', gap:4, alignItems:m.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                              <span style={{ fontSize:11, fontWeight:700, fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:0.5, color:m.role === 'user' ? t.orange : t.textBright }}>
+                                {m.role === 'user' ? (settings.username || 'You') : 'Casa.GG'}
+                              </span>
+                              {m.ts && <span style={{ fontSize:10, color:t.textMuted, fontFamily:"'DM Mono',monospace" }}>{m.ts}</span>}
+                              {m.source === 'local'     && <span style={{ fontSize:9, fontWeight:800, fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:1, color:'#FBBF24',  background:'rgba(251,191,36,0.12)',  border:'1px solid rgba(251,191,36,0.3)',  borderRadius:20, padding:'1px 7px' }}>⚡ LOCAL</span>}
+                              {m.source === 'session'   && <span style={{ fontSize:9, fontWeight:800, fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:1, color:'#818CF8',  background:'rgba(99,102,241,0.12)', border:'1px solid rgba(99,102,241,0.3)', borderRadius:20, padding:'1px 7px' }}>⚡ SESSION</span>}
+                              {m.source === 'api'       && <span style={{ fontSize:9, fontWeight:800, fontFamily:"'Barlow Condensed',sans-serif", letterSpacing:1, color:t.textMuted, background:t.bgInput,              border:`1px solid ${t.border}`,          borderRadius:20, padding:'1px 7px' }}>API</span>}
+                            </div>
+                            <div style={{ padding:'12px 16px', borderRadius:m.role === 'user' ? '14px 14px 4px 14px' : '14px 14px 14px 4px', background:m.role === 'user' ? 'linear-gradient(135deg,#FF6B1A,#FF8A42)' : t.bgCard, color:m.role === 'user' ? '#fff' : t.textPrimary, fontSize:14, lineHeight:1.7, border:m.role === 'assistant' ? `1px solid ${t.border}` : 'none', boxShadow:m.role === 'user' ? t.shadowOrange : t.shadowCard }}>
+                              {m.role === 'assistant' ? <Formatted text={m.content} t={t} /> : m.content}
+                            </div>
+                            {m.role === 'assistant' && m.cacheId && !m.voted && (
+                              <div style={{ display:'flex', gap:5, alignItems:'center' }}>
+                                <span style={{ fontSize:10, color:t.textMuted }}>Helpful?</span>
+                                <button onClick={() => voteAnswer(m.cacheId, true,  i)} style={{ background:'none', border:`1px solid ${t.border}`, borderRadius:20, padding:'2px 9px', fontSize:12, cursor:'pointer', color:t.textSecond, transition:'all 0.15s' }}>👍</button>
+                                <button onClick={() => voteAnswer(m.cacheId, false, i)} style={{ background:'none', border:`1px solid ${t.border}`, borderRadius:20, padding:'2px 9px', fontSize:12, cursor:'pointer', color:t.textSecond, transition:'all 0.15s' }}>👎</button>
+                              </div>
+                            )}
+                            {m.role === 'assistant' && m.voted && (
+                              <span style={{ fontSize:10, color:t.textMuted }}>Thanks for the feedback</span>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                    {loading && (
+                      <div className="msg-in" style={{ display:'flex', gap:12 }}>
+                        <div style={{ width:36, height:36, borderRadius:10, background:t.bgCard, border:`1px solid ${t.border}`, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, overflow:'hidden', boxShadow:t.shadowCard }}>
+                          <img src={assetPath('casaorangegg.png')} alt="" style={{ width:36, height:36, objectFit:'contain' }} />
+                        </div>
+                        <div style={{ padding:'13px 18px', background:t.bgCard, borderRadius:'14px 14px 14px 4px', border:`1px solid ${t.border}`, boxShadow:t.shadowCard, display:'flex', alignItems:'center', gap:12 }}>
+                          <div style={{ display:'flex', gap:5 }}>
+                            {[...Array(3)].map((_,i) => <div key={i} style={{ width:7, height:7, borderRadius:'50%', background:'#FF6B1A', animation:`blink 1.1s ${i*0.22}s infinite` }} />)}
+                          </div>
+                          <span style={{ fontSize:12, color:t.textMuted }}>{searchStatus || 'Thinking…'}</span>
+                        </div>
+                      </div>
+                    )}
+                    <div ref={messagesEnd} />
+                  </div>
+
+                  {/* ── INPUT AREA ─────────────────────────────────────── */}
+                  <div style={{ padding:'14px 24px 18px', background:t.bgPanel, borderTop:`1px solid ${t.border}`, display:'flex', flexDirection:'column', gap:10, flexShrink:0 }}>
+                    <div style={{ position:'relative' }}>
+                      <textarea value={input} onChange={e => setInput(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+                          if ((speaking || listening) && e.key !== 'Enter') stopAll();
+                        }}
+                        placeholder={listening && interimText ? interimText : `Ask Casa.GG anything${detectedGame ? ` about ${detectedGame}` : ''}… or say "Hey Casa"`}
+                        rows={1}
+                        style={{ width:'100%', background: listening ? 'rgba(255,107,26,0.04)' : t.bgInput, border:`1px solid ${listening ? '#FF6B1A' : t.border}`, borderRadius:12, padding:'12px 52px 12px 16px', fontFamily:"'Barlow',sans-serif", fontSize:14, color:t.textPrimary, resize:'none', outline:'none', minHeight:48, maxHeight:120, lineHeight:1.5, transition:'border-color 0.2s' }}
+                        onFocus={e => e.target.style.borderColor='#FF6B1A'}
+                        onBlur={e => e.target.style.borderColor=t.border} />
+                      <button onClick={() => handleSend()} disabled={!input.trim() || loading}
+                        style={{ position:'absolute', right:10, bottom:10, width:32, height:32, background:!input.trim()||loading ? t.border : 'linear-gradient(135deg,#FF6B1A,#FF8A42)', border:'none', borderRadius:9, cursor:!input.trim()||loading ? 'not-allowed' : 'pointer', display:'flex', alignItems:'center', justifyContent:'center', transition:'all 0.2s', boxShadow:!input.trim()||loading ? 'none' : t.shadowOrange }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={!input.trim()||loading ? t.textMuted : '#fff'} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                        </svg>
+                      </button>
+                    </div>
+
+                    <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                      {/* Mic visualizer — shows when wake word active or listening */}
+                      <canvas ref={vizCanvasRef} width={80} height={28}
+                        style={{ display: listening || wakeActive ? 'block' : 'none', borderRadius:6, background: t.bgInput, border:`1px solid ${listening ? '#FF6B1A' : t.border}`, alignSelf:'center' }} />
+
+                      {/* Game Overlay (real window) */}
+                      <button onClick={toggleOverlay}
+                        style={{ display:'flex', alignItems:'center', gap:7, padding:'7px 16px', background:overlayOpen ? t.orangeSoft : t.bgInput, border:`1px solid ${overlayOpen ? '#FF6B1A' : t.border}`, borderRadius:20, color:overlayOpen ? '#FF6B1A' : t.textSecond, fontFamily:"'Barlow',sans-serif", fontWeight:600, fontSize:12, cursor:'pointer', transition:'all 0.15s' }}>
+                        🖥️ {overlayOpen ? 'Hide Overlay' : 'Game Overlay'}
+                      </button>
+
+                      {/* Select Game */}
+                      <button onClick={() => setShowWinPicker(true)}
+                        style={{ display:'flex', alignItems:'center', gap:7, padding:'7px 16px', background:t.bgInput, border:`1px solid ${t.border}`, borderRadius:20, color:t.textSecond, fontFamily:"'Barlow',sans-serif", fontWeight:600, fontSize:12, cursor:'pointer' }}>
+                        🎮 {detectedGame ? detectedGame.substring(0, 18) : 'Select Game'}
+                      </button>
+
+                      {/* Stop speaking */}
+                      {speaking && (
+                        <button onClick={stopAll}
+                          style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 16px', background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.3)', borderRadius:20, color:'#EF4444', fontFamily:"'Barlow',sans-serif", fontWeight:600, fontSize:12, cursor:'pointer' }}>
+                          ■ Stop Speaking
+                        </button>
+                      )}
+
+                      {/* Clear chat */}
+                      {messages.length > 0 && (
+                        <button onClick={() => { setMessages([]); convRef.current = []; }}
+                          style={{ marginLeft:'auto', display:'flex', alignItems:'center', gap:6, padding:'7px 14px', background:t.bgInput, border:`1px solid ${t.border}`, borderRadius:20, color:t.textMuted, fontFamily:"'Barlow',sans-serif", fontWeight:600, fontSize:12, cursor:'pointer' }}>
+                          🗑️ Clear Chat
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : tab === 'requests' ? (
+                <RequestGamesPanel settings={settings} t={t} />
+              ) : (
+                <SettingsPanel settings={settings} setSettings={setSettings} t={t} updateStatus={updateStatus} setUpdateStatus={setUpdateStatus} />
+              )}
+            </div>
+          </div>
+
+          {/* Window picker modal */}
+          {showWinPicker && (
+            <WindowPickerModal t={t} onSelect={handleWindowSelect} onClose={() => setShowWinPicker(false)} />
+          )}
+
+          {/* Logo intro — overlays the already-rendered app so everything is ready the moment it fades */}
+          {showIntro && <LogoIntro onDone={handleIntroDone} />}
+        </>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(CasaGG));
+  </script>
+</body>
+</html>

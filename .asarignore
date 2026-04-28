@@ -1,0 +1,4 @@
+dist
+app.asar
+*.blockmap
+node_modules

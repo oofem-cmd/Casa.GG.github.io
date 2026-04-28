@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CasaGG — Live Map</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: #1E2028; color: #E8EAF0; font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; }
+
+    .panel {
+      display: flex; flex-direction: column; height: 100%;
+      background: #252830; border: 1px solid #383D4E; border-radius: 14px; overflow: hidden;
+    }
+
+    .titlebar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px 9px; background: #1E2028;
+      border-bottom: 1px solid #383D4E; flex-shrink: 0; cursor: move;
+      user-select: none;
+    }
+    .brand { display: flex; align-items: center; gap: 8px; }
+    .logo-img { width: 22px; height: 22px; object-fit: contain; }
+    .title-text { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 14px; color: #FF6B1A; letter-spacing: 1.5px; }
+    .title-text span { color: #e8eaf0; }
+    .game-label { font-size: 11px; color: #9AA0B8; font-weight: 600; }
+    .icon-btn {
+      width: 22px; height: 22px; border-radius: 50%;
+      border: 1px solid #383D4E; background: rgba(255,255,255,0.05);
+      color: #5A6080; cursor: pointer; font-size: 11px;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.15s;
+    }
+    .icon-btn:hover { background: rgba(255,107,26,0.2); color: #FF6B1A; border-color: rgba(255,107,26,0.4); }
+
+    /* Map area */
+    .map-area {
+      flex: 1; position: relative; overflow: hidden; background: #1A1C23;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .map-img {
+      max-width: 100%; max-height: 100%; object-fit: contain;
+      display: block; border-radius: 4px;
+    }
+    .map-placeholder {
+      display: flex; flex-direction: column; align-items: center; gap: 12px;
+      color: #5A6080; text-align: center; padding: 32px;
+    }
+    .map-placeholder .icon { font-size: 48px; opacity: 0.3; }
+    .map-placeholder .text { font-size: 14px; line-height: 1.7; }
+
+    /* Player marker */
+    .player-marker {
+      position: absolute; width: 16px; height: 16px;
+      background: #FF6B1A; border: 2px solid #fff;
+      border-radius: 50%; transform: translate(-50%, -50%);
+      box-shadow: 0 0 0 4px rgba(255,107,26,0.3);
+      animation: pulse 2s infinite;
+      pointer-events: none;
+      transition: left 0.5s ease, top 0.5s ease;
+      z-index: 10;
+    }
+    .player-direction {
+      position: absolute; width: 0; height: 0;
+      border-left: 5px solid transparent; border-right: 5px solid transparent;
+      border-bottom: 10px solid #FF6B1A;
+      transform-origin: 50% 100%;
+      pointer-events: none; z-index: 11;
+    }
+
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 4px rgba(255,107,26,0.3); }
+      50%       { box-shadow: 0 0 0 10px rgba(255,107,26,0); }
+    }
+
+    /* Info strip */
+    .info-strip {
+      padding: 8px 14px; background: #1E2028;
+      border-top: 1px solid #383D4E; flex-shrink: 0;
+      display: flex; gap: 20px; align-items: center; flex-wrap: wrap;
+    }
+    .info-cell { display: flex; flex-direction: column; gap: 2px; }
+    .info-label { font-size: 9px; color: #5A6080; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; }
+    .info-value { font-size: 13px; color: #E8EAF0; font-weight: 600; font-family: 'DM Mono', monospace; }
+    .info-value.orange { color: #FF6B1A; }
+    .info-value.green  { color: #22C55E; }
+
+    /* Game selector */
+    .game-selector {
+      padding: 8px 14px; background: #252830;
+      border-top: 1px solid #383D4E; flex-shrink: 0;
+      display: flex; gap: 6px; flex-wrap: wrap;
+    }
+    .game-btn {
+      padding: 4px 12px; background: #2D3140; border: 1px solid #383D4E;
+      border-radius: 20px; color: #9AA0B8; font-size: 11px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s; white-space: nowrap;
+    }
+    .game-btn.active { background: rgba(255,107,26,0.15); border-color: rgba(255,107,26,0.4); color: #FF6B1A; }
+    .game-btn:hover:not(.active) { border-color: #5A6080; color: #E8EAF0; }
+
+    @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@700;800&family=DM+Mono&display=swap');
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <div class="titlebar" id="titlebar">
+      <div class="brand">
+        <img class="logo-img" src="./assets/casaorangegg.png" alt="" onerror="this.style.display='none'">
+        <span class="title-text">Casa<span>.GG</span> — Live Map</span>
+        <span class="game-label" id="game-label"></span>
+      </div>
+      <div style="display:flex;gap:5px">
+        <button class="icon-btn" title="Refresh map" onclick="refreshMap()">↺</button>
+        <button class="icon-btn" title="Close" onclick="closeMap()">✕</button>
+      </div>
+    </div>
+
+    <div class="map-area" id="map-area">
+      <div class="map-placeholder" id="map-placeholder">
+        <span class="icon">🗺️</span>
+        <div class="text">
+          Map loads automatically when a supported game is detected.<br>
+          <small>Position tracking activates when Overwolf game events provide location data.</small>
+        </div>
+      </div>
+      <img class="map-img" id="map-img" src="" alt="Game Map" style="display:none"
+           onload="document.getElementById('map-placeholder').style.display='none'; this.style.display='block';"
+           onerror="this.style.display='none'; document.getElementById('map-placeholder').style.display='flex';" />
+      <div class="player-marker" id="player-marker" style="display:none; left:50%; top:50%;"></div>
+      <div class="player-direction" id="player-direction" style="display:none"></div>
+    </div>
+
+    <div class="info-strip" id="info-strip" style="display:none">
+      <div class="info-cell">
+        <span class="info-label">Position</span>
+        <span class="info-value orange" id="info-pos">—</span>
+      </div>
+      <div class="info-cell">
+        <span class="info-label">Zone / Area</span>
+        <span class="info-value" id="info-zone">—</span>
+      </div>
+      <div class="info-cell">
+        <span class="info-label">Kills</span>
+        <span class="info-value green" id="info-kills">0</span>
+      </div>
+      <div class="info-cell">
+        <span class="info-label">Health</span>
+        <span class="info-value green" id="info-hp">100</span>
+      </div>
+      <div class="info-cell">
+        <span class="info-label">Match Time</span>
+        <span class="info-value" id="info-time">—</span>
+      </div>
+    </div>
+
+    <div class="game-selector" id="game-selector">
+      <span style="font-size:11px;color:#5A6080;font-weight:700;align-self:center;letter-spacing:1px">MAP:</span>
+    </div>
+  </div>
+
+  <script>
+    'use strict';
+
+    // ── Static maps database ───────────────────────────────────────────
+    // Using publicly accessible map images from wikis/community resources
+    const GAME_MAPS = {
+      // Key: lowercase game name fragment → array of maps
+      'fortnite': [
+        { name: 'Battle Royale', url: 'https://www.fortnitegame.com/images/map.jpg', hasPosition: true }
+      ],
+      'apex': [
+        { name: "King's Canyon",  url: 'https://static.wikia.nocookie.net/apexlegends/images/a/a8/Kings_Canyon_Map.png', hasPosition: true },
+        { name: 'World\'s Edge', url: 'https://static.wikia.nocookie.net/apexlegends/images/2/27/Worlds_Edge_Map.png', hasPosition: true },
+        { name: 'Olympus',       url: 'https://static.wikia.nocookie.net/apexlegends/images/8/8e/Olympus_Map.png', hasPosition: true },
+        { name: 'Storm Point',   url: 'https://static.wikia.nocookie.net/apexlegends/images/4/4e/Storm_Point_Map.png', hasPosition: true },
+      ],
+      'valorant': [
+        { name: 'Ascent',   url: 'https://www.valutil.com/assets/maps/ascent.jpg', hasPosition: false },
+        { name: 'Bind',     url: 'https://www.valutil.com/assets/maps/bind.jpg', hasPosition: false },
+        { name: 'Haven',    url: 'https://www.valutil.com/assets/maps/haven.jpg', hasPosition: false },
+        { name: 'Split',    url: 'https://www.valutil.com/assets/maps/split.jpg', hasPosition: false },
+        { name: 'Icebox',   url: 'https://www.valutil.com/assets/maps/icebox.jpg', hasPosition: false },
+        { name: 'Fracture', url: 'https://www.valutil.com/assets/maps/fracture.jpg', hasPosition: false },
+        { name: 'Breeze',   url: 'https://www.valutil.com/assets/maps/breeze.jpg', hasPosition: false },
+        { name: 'Pearl',    url: 'https://www.valutil.com/assets/maps/pearl.jpg', hasPosition: false },
+      ],
+      'cs2': [
+        { name: 'Dust 2',   url: 'https://static.wikia.nocookie.net/cswikia/images/0/03/Dust_II_callouts.jpg', hasPosition: false },
+        { name: 'Mirage',   url: 'https://static.wikia.nocookie.net/cswikia/images/5/5d/Mirage_callouts.jpg', hasPosition: false },
+        { name: 'Inferno',  url: 'https://static.wikia.nocookie.net/cswikia/images/2/29/Inferno_callouts.jpg', hasPosition: false },
+        { name: 'Nuke',     url: 'https://static.wikia.nocookie.net/cswikia/images/1/16/Nuke_callouts.jpg', hasPosition: false },
+        { name: 'Overpass', url: 'https://static.wikia.nocookie.net/cswikia/images/0/01/Overpass_callouts.jpg', hasPosition: false },
+        { name: 'Vertigo',  url: 'https://static.wikia.nocookie.net/cswikia/images/e/e1/Vertigo_callouts.jpg', hasPosition: false },
+      ],
+      'csgo': [
+        { name: 'Dust 2',  url: 'https://static.wikia.nocookie.net/cswikia/images/0/03/Dust_II_callouts.jpg', hasPosition: false },
+        { name: 'Mirage',  url: 'https://static.wikia.nocookie.net/cswikia/images/5/5d/Mirage_callouts.jpg', hasPosition: false },
+        { name: 'Inferno', url: 'https://static.wikia.nocookie.net/cswikia/images/2/29/Inferno_callouts.jpg', hasPosition: false },
+      ],
+      'league': [
+        { name: "Summoner's Rift", url: 'https://static.wikia.nocookie.net/leagueoflegends/images/d/d9/Summoner%27s_Rift_Map.png', hasPosition: true },
+        { name: 'ARAM (Howling Abyss)', url: 'https://static.wikia.nocookie.net/leagueoflegends/images/7/72/Howling_Abyss_Map.png', hasPosition: false },
+      ],
+      'dota': [
+        { name: 'Dota 2 Map', url: 'https://static.wikia.nocookie.net/dota2/images/8/87/Minimap.png', hasPosition: true },
+      ],
+      'overwatch': [
+        { name: 'All Maps', url: 'https://blz-contentstack-images.akamaized.net/v3/assets/blt9c12f249ac15c7ec/blt7b4f5d6a4c834b5a/62bc4c8f5ac44f16ac5e3f5f/map-select-bg-all.jpg', hasPosition: false },
+      ],
+    };
+
+    // ── State ──────────────────────────────────────────────────────────
+    let currentGame    = null;
+    let currentMapIdx  = 0;
+    let currentMapList = [];
+    let playerPos      = null; // { x, y } normalized 0-1
+    let playerDir      = 0;    // degrees
+    let sessionStats   = { kills: 0, health: 100 };
+
+    const mapImg     = document.getElementById('map-img');
+    const mapPlaceholder = document.getElementById('map-placeholder');
+    const playerMarker   = document.getElementById('player-marker');
+    const playerDirEl    = document.getElementById('player-direction');
+    const infoStrip      = document.getElementById('info-strip');
+    const gameSelector   = document.getElementById('game-selector');
+    const gameLabel      = document.getElementById('game-label');
+    const mapArea        = document.getElementById('map-area');
+
+    // ── Titlebar drag via Overwolf ─────────────────────────────────────
+    document.getElementById('titlebar').addEventListener('mousedown', e => {
+      if (e.target.classList.contains('icon-btn')) return;
+      if (window.overwolf) {
+        overwolf.windows.getCurrentWindow(result => {
+          if (result.success) overwolf.windows.dragMove(result.window.id);
+        });
+      }
+    });
+
+    // ── Overwolf message listener ──────────────────────────────────────
+    if (window.overwolf) {
+      overwolf.windows.onMessageReceived.addListener(msg => {
+        const type    = msg.id;
+        const content = msg.content || {};
+
+        if (type === 'game-launched') {
+          setGame(content.gameName || '');
+        } else if (type === 'game-closed') {
+          currentGame = null;
+          gameLabel.textContent = '';
+          mapImg.src = '';
+          mapImg.style.display = 'none';
+          mapPlaceholder.style.display = 'flex';
+          playerMarker.style.display = 'none';
+          infoStrip.style.display = 'none';
+          renderGameSelector();
+          sessionStats = { kills: 0, health: 100 };
+        } else if (type === 'game-event') {
+          handleGameEvents(content.events || []);
+        } else if (type === 'game-info-update') {
+          handleInfoUpdate(content.info || {});
+        }
+      });
+
+      // Check if game already running
+      overwolf.games.getRunningGameInfo(result => {
+        if (result && result.isRunning && result.gameInfo) {
+          setGame(result.gameInfo.displayName || result.gameInfo.title || '');
+        }
+      });
+    }
+
+    // ── Set game and load matching maps ────────────────────────────────
+    function setGame(gameName) {
+      currentGame = gameName;
+      gameLabel.textContent = gameName;
+
+      const lower = gameName.toLowerCase();
+      let matched = null;
+      for (const [key, maps] of Object.entries(GAME_MAPS)) {
+        if (lower.includes(key)) { matched = maps; break; }
+      }
+
+      if (matched) {
+        currentMapList = matched;
+        currentMapIdx  = 0;
+        loadMap(matched[0]);
+        renderGameSelector();
+        infoStrip.style.display = 'flex';
+      } else {
+        // Unknown game — show placeholder with game name
+        currentMapList = [];
+        mapImg.style.display = 'none';
+        mapPlaceholder.style.display = 'flex';
+        mapPlaceholder.innerHTML = `
+          <span class="icon">🎮</span>
+          <div class="text">
+            <strong style="color:#FF6B1A">${gameName}</strong><br>
+            No built-in map for this game yet.<br>
+            <small>Live events are still captured and used for AI answers.</small>
+          </div>`;
+        renderGameSelector();
+      }
+    }
+
+    function loadMap(mapDef) {
+      if (!mapDef) return;
+      mapImg.src = mapDef.url;
+      mapImg.style.display = 'block';
+      mapPlaceholder.style.display = 'none';
+      playerMarker.style.display = 'none';
+      playerDirEl.style.display  = 'none';
+    }
+
+    function renderGameSelector() {
+      // Clear existing buttons (keep the label)
+      const label = gameSelector.querySelector('span');
+      gameSelector.innerHTML = '';
+      gameSelector.appendChild(label);
+
+      if (!currentMapList.length) return;
+      currentMapList.forEach((m, i) => {
+        const btn = document.createElement('button');
+        btn.className = 'game-btn' + (i === currentMapIdx ? ' active' : '');
+        btn.textContent = m.name;
+        btn.onclick = () => {
+          currentMapIdx = i;
+          loadMap(m);
+          document.querySelectorAll('.game-btn').forEach((b, j) => b.classList.toggle('active', j === i));
+        };
+        gameSelector.appendChild(btn);
+      });
+    }
+
+    // ── Handle game events for position / stats ────────────────────────
+    function handleGameEvents(events) {
+      events.forEach(ev => {
+        const n = ev.name.toLowerCase();
+        const d = ev.data;
+
+        // Position data — different games use different formats
+        if (n === 'location' || n === 'position' || n === 'player_location') {
+          parsePosition(d);
+        }
+        if (n === 'kill' || n === 'killfeed') {
+          sessionStats.kills++;
+          document.getElementById('info-kills').textContent = sessionStats.kills;
+        }
+      });
+    }
+
+    function handleInfoUpdate(info) {
+      // Look for position in info updates
+      for (const category of Object.values(info)) {
+        if (typeof category !== 'object') continue;
+        for (const [key, val] of Object.entries(category)) {
+          if (key.toLowerCase().includes('location') || key.toLowerCase().includes('position')) {
+            parsePosition(val);
+          }
+          if (key.toLowerCase().includes('health') || key.toLowerCase() === 'hp') {
+            const hp = parseInt(val) || 0;
+            sessionStats.health = hp;
+            const el = document.getElementById('info-hp');
+            el.textContent = hp;
+            el.className = 'info-value ' + (hp > 60 ? 'green' : hp > 30 ? 'orange' : 'danger');
+          }
+          if (key.toLowerCase().includes('kills')) {
+            sessionStats.kills = parseInt(val) || sessionStats.kills;
+            document.getElementById('info-kills').textContent = sessionStats.kills;
+          }
+          if (key.toLowerCase().includes('zone') || key.toLowerCase().includes('area') || key.toLowerCase() === 'map') {
+            document.getElementById('info-zone').textContent = String(val).slice(0, 20);
+          }
+        }
+      }
+    }
+
+    function parsePosition(data) {
+      let x = null, y = null, dir = null;
+      const str = typeof data === 'string' ? data : JSON.stringify(data || '');
+
+      // Try various formats: {x,y}, {X,Y}, "x,y", "x:y"
+      if (typeof data === 'object' && data !== null) {
+        x   = data.x ?? data.X ?? data.longitude ?? null;
+        y   = data.y ?? data.Y ?? data.latitude  ?? null;
+        dir = data.rotation ?? data.direction ?? data.facing ?? null;
+      } else if (typeof str === 'string') {
+        const m = str.match(/[-\d.]+/g);
+        if (m && m.length >= 2) { x = parseFloat(m[0]); y = parseFloat(m[1]); }
+      }
+
+      if (x === null || y === null) return;
+
+      // Try to normalize coordinates to 0-1 range
+      // Different games have wildly different coordinate systems
+      // We'll apply heuristic normalization
+      const currentMap = currentMapList[currentMapIdx];
+      const mapName = (currentGame || '').toLowerCase();
+
+      let normX = x, normY = y;
+      if (mapName.includes('apex')) {
+        // Apex: roughly -3000 to 3000 range
+        normX = (x + 3000) / 6000;
+        normY = (y + 3000) / 6000;
+      } else if (mapName.includes('fortnite')) {
+        // Fortnite: roughly -200000 to 200000 range (Unreal units)
+        normX = (x + 200000) / 400000;
+        normY = 1 - (y + 200000) / 400000; // Y-axis often inverted
+      } else if (mapName.includes('league')) {
+        // League: 0 to 15000
+        normX = x / 15000;
+        normY = 1 - y / 15000;
+      } else if (mapName.includes('dota')) {
+        // Dota: roughly -8000 to 8000
+        normX = (x + 8000) / 16000;
+        normY = 1 - (y + 8000) / 16000;
+      } else {
+        // Generic: assume coordinates are already somewhat normalized
+        if (Math.abs(x) > 1 || Math.abs(y) > 1) {
+          const range = Math.max(Math.abs(x), Math.abs(y), 100);
+          normX = (x + range) / (range * 2);
+          normY = (y + range) / (range * 2);
+        }
+      }
+
+      // Clamp 0-1
+      normX = Math.max(0.02, Math.min(0.98, normX));
+      normY = Math.max(0.02, Math.min(0.98, normY));
+
+      playerPos = { x: normX, y: normY };
+      if (dir !== null) playerDir = parseFloat(dir) || 0;
+
+      updatePlayerMarker();
+      document.getElementById('info-pos').textContent = `${Math.round(x)}, ${Math.round(y)}`;
+    }
+
+    function updatePlayerMarker() {
+      if (!playerPos) return;
+      const rect = mapArea.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+
+      // Position relative to the map image, not the entire area
+      const imgEl = mapImg;
+      if (!imgEl.naturalWidth) return;
+
+      // Calculate rendered image bounds (object-fit: contain)
+      const scale = Math.min(rect.width / imgEl.naturalWidth, rect.height / imgEl.naturalHeight);
+      const imgW  = imgEl.naturalWidth * scale;
+      const imgH  = imgEl.naturalHeight * scale;
+      const imgLeft = (rect.width - imgW) / 2;
+      const imgTop  = (rect.height - imgH) / 2;
+
+      const px = imgLeft + playerPos.x * imgW;
+      const py = imgTop  + playerPos.y * imgH;
+
+      playerMarker.style.left    = `${px}px`;
+      playerMarker.style.top     = `${py}px`;
+      playerMarker.style.display = 'block';
+
+      // Direction indicator
+      playerDirEl.style.left      = `${px}px`;
+      playerDirEl.style.top       = `${py - 12}px`;
+      playerDirEl.style.transform = `translate(-50%, -100%) rotate(${playerDir}deg)`;
+      playerDirEl.style.display   = 'block';
+    }
+
+    function refreshMap() {
+      if (currentMapList.length) {
+        const m = currentMapList[currentMapIdx];
+        mapImg.src = '';
+        setTimeout(() => { mapImg.src = m.url; }, 50);
+      } else if (window.overwolf) {
+        overwolf.games.getRunningGameInfo(result => {
+          if (result && result.isRunning && result.gameInfo) {
+            setGame(result.gameInfo.displayName || result.gameInfo.title || '');
+          }
+        });
+      }
+    }
+
+    function closeMap() {
+      if (window.overwolf) {
+        overwolf.windows.getCurrentWindow(result => {
+          if (result.success) overwolf.windows.hide(result.window.id, () => {});
+        });
+      }
+    }
+
+    // Re-draw marker when window resizes
+    window.addEventListener('resize', () => { if (playerPos) updatePlayerMarker(); });
+    mapImg.addEventListener('load', () => { if (playerPos) updatePlayerMarker(); });
+  </script>
+</body>
+</html>

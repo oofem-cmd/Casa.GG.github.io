@@ -1,0 +1,17 @@
+#overlay {
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 10px;
+  border-radius: 5px;
+  display: flex;
+  gap: 10px;
+}
+
+#overlay-input {
+  flex: 1;
+  padding: 5px;
+}
+
+#overlay-send {
+  padding: 5px 10px;
+}

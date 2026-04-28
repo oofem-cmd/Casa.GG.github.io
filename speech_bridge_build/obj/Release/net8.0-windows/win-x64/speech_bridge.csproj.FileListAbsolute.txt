@@ -1,0 +1,17 @@
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\bin\Release\net8.0-windows\win-x64\speech_bridge.exe
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\bin\Release\net8.0-windows\win-x64\speech_bridge.deps.json
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\bin\Release\net8.0-windows\win-x64\speech_bridge.runtimeconfig.json
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\bin\Release\net8.0-windows\win-x64\speech_bridge.dll
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\bin\Release\net8.0-windows\win-x64\speech_bridge.pdb
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\bin\Release\net8.0-windows\win-x64\System.Speech.dll
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\obj\Release\net8.0-windows\win-x64\speech_bridge.csproj.AssemblyReference.cache
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\obj\Release\net8.0-windows\win-x64\speech_bridge.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\obj\Release\net8.0-windows\win-x64\speech_bridge.AssemblyInfoInputs.cache
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\obj\Release\net8.0-windows\win-x64\speech_bridge.AssemblyInfo.cs
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\obj\Release\net8.0-windows\win-x64\speech_bridge.csproj.CoreCompileInputs.cache
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\obj\Release\net8.0-windows\win-x64\speech_b.6E3DEE5B.Up2Date
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\obj\Release\net8.0-windows\win-x64\speech_bridge.dll
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\obj\Release\net8.0-windows\win-x64\refint\speech_bridge.dll
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\obj\Release\net8.0-windows\win-x64\speech_bridge.pdb
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\obj\Release\net8.0-windows\win-x64\speech_bridge.genruntimeconfig.cache
+C:\Users\xcmmo\Desktop\casaggv24\speech_bridge_build\obj\Release\net8.0-windows\win-x64\ref\speech_bridge.dll
